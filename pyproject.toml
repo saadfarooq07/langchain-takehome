@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "log-analyzer-agent"
+version = "0.1.0"
+description = "A LangGraph-based agent for analyzing logs"
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+packages = [{include = "log_analyzer_agent", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+langchain = ">=0.1.0"
+langchain-core = ">=0.1.0"
+langgraph = ">=0.0.20"
+pydantic = ">=2.0.0"
+langchain-google-genai = ">=0.0.5"
+langchain-groq = ">=0.0.1"
+langchain-community = ">=0.0.10"
+aiohttp = ">=3.8.5"
+tavily-python = ">=0.1.9"
+python-dotenv = ">=1.0.0"
+typing-extensions = ">=4.7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

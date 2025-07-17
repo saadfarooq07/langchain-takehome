@@ -20,7 +20,7 @@ pip install -r requirements.txt
 
 # Set up environment variables
 cp .env.example .env
-# Edit .env with your API keys: GOOGLE_API_KEY, GROQ_API_KEY, TAVILY_API_KEY
+# Edit .env with your API keys: GEMINI_API_KEY, GROQ_API_KEY, TAVILY_API_KEY
 ```
 
 ### Running the Agent
@@ -94,5 +94,5 @@ The project includes a comprehensive log dataset in `loghub/` with:
    - Package must be installed in editable mode
 
 3. **API Key errors**
-   - All three API keys are required: GOOGLE_API_KEY, GROQ_API_KEY, TAVILY_API_KEY
+   - All three API keys are required: GEMINI_API_KEY, GROQ_API_KEY, TAVILY_API_KEY
    - Copy `.env.example` to `.env` and add your keys

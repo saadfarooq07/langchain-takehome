@@ -20,6 +20,90 @@ from .state import State
 from .utils import init_model
 
 
+class CommandSuggestionEngine:
+    """Engine for suggesting diagnostic commands based on identified issues."""
+    
+    def suggest_commands(
+        self, 
+        environment_info: Dict[str, Any], 
+        issues: List[Dict[str, Any]]
+    ) -> List[Dict[str, str]]:
+        """Generate command suggestions based on environment and issues.
+        
+        Args:
+            environment_info: Information about the system environment
+            issues: List of identified issues
+            
+        Returns:
+            List of command suggestions with descriptions
+        """
+        suggestions = []
+        
+        # Analyze issues and suggest relevant commands
+        for issue in issues:
+            issue_type = issue.get("type", "").lower()
+            issue_desc = issue.get("description", "").lower()
+            
+            # Memory-related issues
+            if any(keyword in issue_desc for keyword in ["memory", "heap", "oom", "out of memory"]):
+                suggestions.extend([
+                    {"command": "free -h", "description": "Check current memory usage"},
+                    {"command": "ps aux --sort=-%mem | head -20", "description": "Show top memory-consuming processes"},
+                    {"command": "dmesg | grep -i memory", "description": "Check kernel memory messages"}
+                ])
+            
+            # Disk-related issues
+            elif any(keyword in issue_desc for keyword in ["disk", "space", "filesystem", "mount"]):
+                suggestions.extend([
+                    {"command": "df -h", "description": "Check disk space usage"},
+                    {"command": "du -sh /* 2>/dev/null | sort -h", "description": "Find large directories"},
+                    {"command": "lsblk", "description": "List block devices"}
+                ])
+            
+            # Network-related issues
+            elif any(keyword in issue_desc for keyword in ["network", "connection", "timeout", "socket"]):
+                suggestions.extend([
+                    {"command": "netstat -tuln", "description": "Show listening ports"},
+                    {"command": "ss -s", "description": "Socket statistics summary"},
+                    {"command": "ip addr show", "description": "Show network interfaces"}
+                ])
+            
+            # Process/service issues
+            elif any(keyword in issue_desc for keyword in ["process", "service", "daemon", "crashed"]):
+                suggestions.extend([
+                    {"command": "systemctl status", "description": "Check system service status"},
+                    {"command": "journalctl -xe --since '1 hour ago'", "description": "Recent system logs"},
+                    {"command": "ps aux | grep -v grep | grep <service_name>", "description": "Check if specific service is running"}
+                ])
+            
+            # Permission issues
+            elif any(keyword in issue_desc for keyword in ["permission", "denied", "access", "forbidden"]):
+                suggestions.extend([
+                    {"command": "ls -la <path>", "description": "Check file permissions"},
+                    {"command": "id", "description": "Show current user and groups"},
+                    {"command": "sudo -l", "description": "List sudo permissions"}
+                ])
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_suggestions = []
+        for suggestion in suggestions:
+            cmd = suggestion["command"]
+            if cmd not in seen:
+                seen.add(cmd)
+                unique_suggestions.append(suggestion)
+        
+        # Add general diagnostic commands if no specific ones were added
+        if not unique_suggestions:
+            unique_suggestions = [
+                {"command": "uname -a", "description": "Show system information"},
+                {"command": "uptime", "description": "Show system uptime and load"},
+                {"command": "tail -50 /var/log/syslog", "description": "Recent system logs"}
+            ]
+        
+        return unique_suggestions
+
+
 
 async def search_documentation(
     query: str, *, config: Annotated[RunnableConfig, InjectedToolArg]

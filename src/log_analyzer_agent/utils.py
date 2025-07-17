@@ -29,7 +29,11 @@ def _init_model_sync(config: Optional[RunnableConfig] = None) -> BaseChatModel:
     
     if configuration.model.startswith("gemini:"):
         model_name = configuration.model.split(":", 1)[1]
-        return ChatGoogleGenerativeAI(model=model_name)
+        # Use GEMINI_API_KEY if available, otherwise fall back to GOOGLE_API_KEY
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is required for Gemini models")
+        return ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key)
     elif configuration.model.startswith("kimi:"):
         # Using Groq API to access Kimi-K2
         if "GROQ_API_KEY" not in os.environ:
@@ -49,7 +53,10 @@ def _init_model_sync(config: Optional[RunnableConfig] = None) -> BaseChatModel:
         )
     else:
         # Default to gemini-flash if model not recognized
-        return ChatGoogleGenerativeAI(model="gemini-1.5-flash")
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is required for Gemini models")
+        return ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key)
 
 
 async def init_model_async(config: Optional[RunnableConfig] = None) -> BaseChatModel:

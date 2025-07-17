@@ -45,6 +45,15 @@ class State(InputState):
     
     needs_user_input: bool = field(default=False)
     "Flag indicating whether the agent is awaiting user input for follow-up questions."
+    
+    user_response: str = field(default="")
+    "The user's response to a request for additional information."
+    
+    pending_request: Optional[Dict[str, Any]] = field(default=None)
+    "The current pending request for user information."
+    
+    additional_context: Optional[Dict[str, Any]] = field(default=None)
+    "Additional context gathered from user interactions."
 
     loop_step: Annotated[int, operator.add] = field(default=0)
     "Counter to track iterations through the workflow."

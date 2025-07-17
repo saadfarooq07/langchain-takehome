@@ -5,22 +5,56 @@ to analyze log files and get actionable insights.
 """
 
 import os
+import sys
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
-from langchain.chat_models import ChatGoogleGenerativeAI, ChatKimi
+# Removed unused imports
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph
 
 # Import our log analyzer agent
 from src.log_analyzer_agent import graph, InputState, Configuration
+from src.log_analyzer_agent.validation import APIKeyValidator
 
 # Load environment variables
 load_dotenv()
 
-# Set API keys from environment variables
-os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
-os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY", "")
-os.environ["TAVILY_API_KEY"] = os.getenv("TAVILY_API_KEY", "")
+# Validate and set API keys from environment variables
+def validate_and_set_api_keys():
+    """Validate API keys and set them in environment."""
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    groq_key = os.getenv("GROQ_API_KEY", "")
+    tavily_key = os.getenv("TAVILY_API_KEY", "")
+    
+    # Validate keys
+    errors = []
+    
+    is_valid, error = APIKeyValidator.validate_gemini_api_key(gemini_key)
+    if not is_valid:
+        errors.append(f"GEMINI_API_KEY: {error}")
+    
+    is_valid, error = APIKeyValidator.validate_groq_api_key(groq_key)
+    if not is_valid:
+        errors.append(f"GROQ_API_KEY: {error}")
+    
+    is_valid, error = APIKeyValidator.validate_tavily_api_key(tavily_key)
+    if not is_valid:
+        errors.append(f"TAVILY_API_KEY: {error}")
+    
+    if errors:
+        print("API Key Validation Errors:")
+        for error in errors:
+            print(f"  - {error}")
+        print("\nPlease check your .env file and ensure all API keys are correctly set.")
+        sys.exit(1)
+    
+    # Set validated keys
+    os.environ["GEMINI_API_KEY"] = gemini_key
+    os.environ["GROQ_API_KEY"] = groq_key
+    os.environ["TAVILY_API_KEY"] = tavily_key
+
+# Validate API keys on module load
+validate_and_set_api_keys()
 
 
 def setup_memory():

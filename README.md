@@ -9,7 +9,7 @@ A LangGraph-based agent that helps analyze logs, identify issues, suggest soluti
 - **Interactive**: Prompts user for additional information when needed
 - **Documentation References**: Provides links to relevant documentation
 - **Dual Model Architecture**:
-  - Gemini 2.5 Flash: Primary model for analyzing large log files (via Google AI API)
+  - Gemini 2.5 Flash: Primary model for analyzing large log files (via Gemini API)
   - Kimi K2: Orchestration model for managing agent tasks (via Groq API)
 
 ## Setup
@@ -21,7 +21,7 @@ A LangGraph-based agent that helps analyze logs, identify issues, suggest soluti
    ```
 3. Create a `.env` file based on `.env.example` with your API keys:
    ```
-   GOOGLE_API_KEY=your_google_api_key_here
+   GEMINI_API_KEY=your_gemini_api_key_here
    GROQ_API_KEY=your_groq_api_key_here
    TAVILY_API_KEY=your_tavily_api_key_here
    ```

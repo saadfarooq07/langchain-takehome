@@ -1,97 +1,87 @@
-"""User input handling node."""
+"""Refactored user input handling node."""
 
-import json
 from typing import Any, Dict, Optional
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 
-from ..state import State
+from ..state import InteractiveState
+from ..configuration import Configuration
 
 
-def handle_user_input(
-    state: State, *, config: Optional[RunnableConfig] = None
+async def handle_user_input(
+    state: InteractiveState, *, config: Optional[RunnableConfig] = None
 ) -> Dict[str, Any]:
-    """Process user input for follow-up requests.
+    """Handle user input for interactive sessions.
     
-    This node is triggered when the agent needs additional information from the user.
-    It processes the pending request and the user's response.
+    This node is only added to the graph when interactive features are enabled.
+    It processes user responses to requests for additional information.
     """
-    # Get the last message which should contain the request for additional info
-    messages = state.get("messages", [])
-    last_ai_message = None
+    # Check if we have a pending request
+    last_message = getattr(state, "messages", None)[-1] if getattr(state, "messages", None) else None
     
-    # Find the last AI message with tool calls
-    for msg in reversed(messages):
-        if isinstance(msg, AIMessage) and msg.tool_calls:
-            last_ai_message = msg
-            break
-    
-    if not last_ai_message:
+    if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
+        # No pending request, return empty update
         return {
+            "messages": [],
             "needs_user_input": False,
-            "messages": [
-                HumanMessage(content="No pending information request found. Continuing analysis...")
-            ]
         }
     
-    # Extract the request details
-    request_info = None
-    for tool_call in last_ai_message.tool_calls:
+    # Find the request_additional_info tool call
+    request_tool_call = None
+    for tool_call in last_message.tool_calls:
         if tool_call["name"] == "request_additional_info":
-            request_info = tool_call["args"]["request"]
+            request_tool_call = tool_call
             break
     
-    if not request_info:
+    if not request_tool_call:
+        # No request for additional info found
         return {
+            "messages": [],
             "needs_user_input": False,
-            "messages": [
-                HumanMessage(content="No specific information request found. Continuing analysis...")
-            ]
         }
     
-    # Get user input from the state
-    user_response = state.get("user_response", "")
+    # Extract request details
+    request_info = request_tool_call["args"]["request"]
+    
+    # Check if we have a user response
+    user_response = getattr(state, 'user_response', '')
     
     if not user_response:
-        # If no user response is provided, prompt for it
-        prompt_message = f"""
-Additional information needed:
-
-Question: {request_info.get('question', 'Unknown question')}
-Reason: {request_info.get('reason', 'Not specified')}
-How to retrieve: {request_info.get('how_to_retrieve', 'Not specified')}
-
-Please provide the requested information:
-"""
+        # Still waiting for user input
         return {
+            "messages": [],
             "needs_user_input": True,
             "pending_request": request_info,
-            "messages": [
-                AIMessage(content=prompt_message)
-            ]
         }
     
     # Process the user response
-    response_message = f"""
-User provided additional information:
+    tool_message = ToolMessage(
+        content=f"User provided additional information: {user_response}",
+        tool_call_id=request_tool_call["id"],
+        status="success"
+    )
+    
+    # Create a new human message with the additional context
+    human_message = HumanMessage(
+        content=f"""Based on the additional information provided:
 
-Original request: {request_info.get('question', 'Unknown question')}
 User response: {user_response}
 
-This information will be incorporated into the analysis.
-"""
+Please continue with the log analysis incorporating this new information."""
+    )
     
-    # Clear the user response and mark that we no longer need input
-    return {
+    # Build response
+    response = {
+        "messages": [tool_message, human_message],
         "needs_user_input": False,
         "user_response": "",  # Clear the response
-        "messages": [
-            HumanMessage(content=response_message)
-        ],
-        "additional_context": {
-            "user_provided_info": {
-                "question": request_info.get('question', ''),
-                "response": user_response
-            }
-        }
     }
+    
+    # Add additional context if state supports it
+    if hasattr(state, 'additional_context'):
+        response["additional_context"] = {
+            "request": request_info,
+            "response": user_response
+        }
+    
+    return response

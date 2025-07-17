@@ -30,20 +30,20 @@ async def validate_analysis(
     Uses the orchestrator model to check if the analysis is ready
     to be presented to the user.
     """
-    if not state.get("analysis_result"):
+    if not getattr(state, "analysis_result", None):
         return {
             "messages": [
                 HumanMessage(content="Analysis is not complete. Please continue analyzing.")
             ]
         }
     
-    last_message = state["messages"][-1]
+    last_message = state.messages[-1]
     if not isinstance(last_message, AIMessage):
         raise ValueError("Expected last message to be an AI message with tool calls.")
     
     # Format prompt for quality check
     checker_prompt = prompts.ANALYSIS_CHECKER_PROMPT.format(
-        analysis=json.dumps(state["analysis_result"], indent=2)
+        analysis=json.dumps(state.analysis_result, indent=2)
     )
     
     # Use orchestrator model for validation

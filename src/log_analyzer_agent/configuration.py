@@ -25,7 +25,7 @@ class Configuration(BaseModel):
     """Simplified configuration for the Log Analyzer Agent."""
 
     model: str = Field(
-        default="gemini:2.5-flash",
+        default="gemini:gemini-2.5-flash",
         description="The model to use for log analysis",
     )
     

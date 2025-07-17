@@ -61,7 +61,7 @@ input_state = {
 # Run the graph
 config = {
     "configurable": {
-        "primary_model": "gemini:2.5-flash",
+        "primary_model": "gemini:gemini-2.5-flash",
         "orchestrator_model": "kimi:k2"
     }
 }

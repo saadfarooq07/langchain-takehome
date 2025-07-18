@@ -28,7 +28,7 @@ class Configuration(BaseModel):
         default="gemini:gemini-2.5-flash",
         description="The model to use for log analysis",
     )
-    
+
     max_search_results: int = Field(
         default=3,
         description="Maximum number of search results to return",
@@ -36,9 +36,50 @@ class Configuration(BaseModel):
         le=10,
     )
 
+    max_analysis_iterations: int = Field(
+        default=10,
+        description="Maximum number of analysis iterations to prevent infinite loops",
+        ge=1,
+        le=50,
+    )
+
+    max_validation_retries: int = Field(
+        default=3,
+        description="Maximum number of validation retry attempts",
+        ge=1,
+        le=10,
+    )
+
+    max_tool_calls: int = Field(
+        default=20,
+        description="Maximum total number of tool calls allowed",
+        ge=1,
+        le=100,
+    )
+
     prompt: ChatPromptTemplate = Field(
         default_factory=lambda: ChatPromptTemplate.from_template(DEFAULT_PROMPT),
         description="The prompt template to use for log analysis",
+    )
+
+    # Cache Configuration
+    enable_cache: bool = Field(
+        default=True,
+        description="Enable caching of analysis results",
+    )
+
+    cache_max_size: int = Field(
+        default=100,
+        description="Maximum number of cache entries",
+        ge=1,
+        le=1000,
+    )
+
+    cache_ttl_seconds: int = Field(
+        default=3600,  # 1 hour
+        description="Time-to-live for cache entries in seconds",
+        ge=60,
+        le=86400,  # Max 24 hours
     )
 
     @classmethod

@@ -7,12 +7,14 @@ from langgraph.graph import add_messages
 
 class InputStateDict(TypedDict):
     """Input state as TypedDict."""
+
     log_content: str
     environment_details: Optional[Dict[str, Any]]
 
 
 class CoreStateDict(InputStateDict):
     """Core state as TypedDict for cleaner serialization."""
+
     messages: Annotated[List[BaseMessage], add_messages]
     analysis_result: Optional[Dict[str, Any]]
     needs_user_input: bool
@@ -20,6 +22,7 @@ class CoreStateDict(InputStateDict):
 
 class InteractiveStateDict(CoreStateDict):
     """Interactive state as TypedDict."""
+
     user_response: str
     pending_request: Optional[Dict[str, Any]]
     additional_context: Optional[Dict[str, Any]]
@@ -28,6 +31,7 @@ class InteractiveStateDict(CoreStateDict):
 
 class MemoryStateDict(InteractiveStateDict):
     """Memory state as TypedDict."""
+
     thread_id: str
     user_id: Optional[str]
     session_id: str
@@ -43,5 +47,6 @@ class MemoryStateDict(InteractiveStateDict):
 
 class OutputStateDict(TypedDict):
     """Output state as TypedDict."""
+
     analysis_result: Dict[str, Any]
     follow_up_requests: Optional[List[Dict[str, Any]]]

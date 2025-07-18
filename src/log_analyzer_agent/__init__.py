@@ -17,25 +17,27 @@ Version 2.0 adds:
 """
 
 # Main imports
-from .graph import create_minimal_graph as graph  # Default graph for backward compatibility
+from .graph import (
+    create_minimal_graph as graph,
+)  # Default graph for backward compatibility
 from .state import (
     CoreState as State,  # Alias for backward compatibility
-    InputState, 
+    InputState,
     OutputState,
     CoreState,
-    InteractiveState, 
+    InteractiveState,
     MemoryState,
-    create_state_class
+    create_state_class,
 )
 from .configuration import Configuration
 from .graph_factory import GraphFactory, get_graph
 from .state_compat import StateAdapter
 
 __all__ = [
-    "graph", 
-    "State", 
-    "InputState", 
-    "OutputState", 
+    "graph",
+    "State",
+    "InputState",
+    "OutputState",
     "Configuration",
     "GraphFactory",
     "get_graph",
@@ -43,7 +45,7 @@ __all__ = [
     "InteractiveState",
     "MemoryState",
     "create_state_class",
-    "StateAdapter"
+    "StateAdapter",
 ]
 
 # Version info

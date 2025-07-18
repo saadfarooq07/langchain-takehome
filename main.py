@@ -55,7 +55,80 @@ validate_and_set_api_keys()
 
 
 async def process_log_minimal(
+def process_log_minimal(
     log_content: str,
+    environment_details: Optional[Dict[str, Any]] = None
+):
+    """Process a log using the minimal graph."""
+    graph = GraphFactory.create_graph(mode="minimal")
+    
+    state = {
+        "log_content": log_content,
+        "environment_details": environment_details
+    }
+    
+    result = graph.invoke(state)
+    return result
+
+
+def process_log_interactive(
+    log_content: str,
+    environment_details: Optional[Dict[str, Any]] = None
+):
+    """Process a log using the interactive graph."""
+    graph = GraphFactory.create_graph(mode="interactive")
+    
+    state = {
+        "log_content": log_content,
+        "environment_details": environment_details,
+        "user_input": None,
+        "pending_questions": None,
+        "user_interaction_required": False
+    }
+    
+    result = graph.invoke(state)
+    return result
+
+
+def process_log_with_memory(
+    log_content: str,
+    user_id: str = "demo_user",
+    application_name: str = "demo_app",
+    environment_details: Optional[Dict[str, Any]] = None
+):
+    """Process a log using the graph with memory."""
+    graph = GraphFactory.create_graph(mode="memory")
+    
+    state = {
+        "log_content": log_content,
+        "environment_details": environment_details,
+        "user_id": user_id,
+        "application_name": application_name,
+        "user_input": None,
+        "pending_questions": None,
+        "user_interaction_required": False,
+        "memory_matches": None,
+        "application_context": None
+    }
+    
+    result = graph.invoke(state)
+    return result
+
+
+def process_log(
+    log_content: str,
+    environment_details: Optional[Dict[str, Any]] = None
+):
+    """Process a log using the full-featured graph."""
+    graph = GraphFactory.create_graph(mode="full")
+    
+    state = {
+        "log_content": log_content,
+        "environment_details": environment_details
+    }
+    
+    result = graph.invoke(state)
+    return result
     environment_details: Optional[Dict[str, Any]] = None
 ):
     """Process a log file with minimal overhead.
@@ -335,6 +408,17 @@ async def main():
 
 if __name__ == "__main__":
     import argparse
+import asyncio
+import os
+import sys
+from typing import Dict, Any, Optional
+
+# Add the repository root to the Python path
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
+from src.log_analyzer_agent.graph_factory import GraphFactory
+from src.log_analyzer_agent.validation import APIKeyValidator
+from src.log_analyzer_agent.state import CoreState, create_state_class
     
     parser = argparse.ArgumentParser(description="Log Analyzer Agent v2")
     parser.add_argument("--mode", choices=["demo", "benchmark", "minimal", "interactive", "memory"], 

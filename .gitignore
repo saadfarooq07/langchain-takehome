@@ -71,3 +71,21 @@ dmypy.json
 # pytype static type analyzer
 .pytype/
 loghub/
+
+# Project specific
+demo_evaluation_results.json
+langsmith_dataset_backup*.json
+*.bak
+*.tmp
+.langgraph/
+checkpoints/
+
+# Node modules (for frontend)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+frontend/build/
+frontend/dist/

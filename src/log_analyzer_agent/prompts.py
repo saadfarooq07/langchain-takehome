@@ -71,4 +71,6 @@ analysis_checker_template = ChatPromptTemplate.from_template(ANALYSIS_CHECKER_PR
 followup_template = ChatPromptTemplate.from_template(FOLLOWUP_PROMPT)
 
 # Documentation search prompt template
-documentation_search_template = ChatPromptTemplate.from_template(DOCUMENTATION_SEARCH_PROMPT)
+documentation_search_template = ChatPromptTemplate.from_template(
+    DOCUMENTATION_SEARCH_PROMPT
+)

@@ -14,17 +14,19 @@ from .routes import router
 async def lifespan(app: FastAPI):
     """Lifespan context manager for FastAPI app."""
     # Setup database tables on startup
-    db_url = os.getenv("DATABASE_URL", "postgresql://loganalyzer:password@localhost:5432/loganalyzer")
+    db_url = os.getenv(
+        "DATABASE_URL", "postgresql://loganalyzer:password@localhost:5432/loganalyzer"
+    )
     auth_service = AuthService(db_url)
-    
+
     try:
         await auth_service.setup_tables()
         print("Database tables set up successfully")
     except Exception as e:
         print(f"Error setting up database tables: {e}")
-    
+
     yield
-    
+
     # Cleanup on shutdown
     try:
         await auth_service.cleanup_expired_sessions()
@@ -38,7 +40,7 @@ app = FastAPI(
     title="Log Analyzer Agent API",
     description="API for analyzing log files using LangGraph with memory",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Add CORS middleware
@@ -59,7 +61,7 @@ async def http_exception_handler(request, exc):
     """Handle HTTP exceptions."""
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error": "HTTP_ERROR", "message": str(exc.detail)}
+        content={"error": "HTTP_ERROR", "message": str(exc.detail)},
     )
 
 
@@ -68,20 +70,17 @@ async def general_exception_handler(request, exc):
     """Handle general exceptions."""
     return JSONResponse(
         status_code=500,
-        content={"error": "INTERNAL_ERROR", "message": "An internal error occurred"}
+        content={"error": "INTERNAL_ERROR", "message": "An internal error occurred"},
     )
 
 
 @app.get("/")
 async def root():
     """Root endpoint."""
-    return {
-        "message": "Log Analyzer Agent API",
-        "version": "1.0.0",
-        "docs": "/docs"
-    }
+    return {"message": "Log Analyzer Agent API", "version": "1.0.0", "docs": "/docs"}
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

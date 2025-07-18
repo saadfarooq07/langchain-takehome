@@ -6,7 +6,7 @@ import tarfile
 import zipfile
 from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
-import pandas as pd
+# import pandas as pd  # Commented out - only needed when actually loading LogHub datasets
 import numpy as np
 from urllib.parse import urlparse
 import requests
@@ -231,7 +231,8 @@ class LogHubProvider(DatasetProvider):
     def _parse_structured_csv(self, csv_file: Path) -> List[Dict[str, Any]]:
         """Parse structured CSV file with log templates."""
         try:
-            df = pd.read_csv(csv_file)
+            # df = pd.read_csv(csv_file)  # Commented out - pandas not available
+            raise NotImplementedError("CSV loading requires pandas. Install with: pip install pandas")
             return df.to_dict('records')
         except Exception as e:
             print(f"Warning: Could not parse {csv_file}: {e}")
@@ -253,7 +254,8 @@ class LogHubProvider(DatasetProvider):
             label_path = extract_dir / label_file
             if label_path.exists():
                 try:
-                    df = pd.read_csv(label_path)
+                    # df = pd.read_csv(label_path)  # Commented out - pandas not available
+                    raise NotImplementedError("CSV loading requires pandas. Install with: pip install pandas")
                     labels[label_file] = df.to_dict('records')
                 except Exception as e:
                     print(f"Warning: Could not load {label_file}: {e}")

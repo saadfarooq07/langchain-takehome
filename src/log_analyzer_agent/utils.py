@@ -284,3 +284,40 @@ def preprocess_log(log_content: str) -> str:
 
     # Return enhanced log content
     return metadata_section + "\n".join(processed_lines)
+
+
+def count_node_visits(messages: list, node_name: str) -> int:
+    """Count how many times a specific node has been visited.
+    
+    Args:
+        messages: List of messages in the conversation
+        node_name: Name of the node to count
+        
+    Returns:
+        Number of times the node has been visited
+    """
+    count = 0
+    for msg in messages:
+        if hasattr(msg, "name") and msg.name == node_name:
+            count += 1
+        elif hasattr(msg, "additional_kwargs"):
+            kwargs = msg.additional_kwargs
+            if kwargs.get("name") == node_name:
+                count += 1
+    return count
+
+
+def count_tool_calls(messages: list) -> int:
+    """Count total number of tool calls in the conversation.
+    
+    Args:
+        messages: List of messages in the conversation
+        
+    Returns:
+        Total number of tool calls
+    """
+    count = 0
+    for msg in messages:
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            count += len(msg.tool_calls)
+    return count

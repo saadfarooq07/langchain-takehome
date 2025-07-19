@@ -7,8 +7,19 @@ from .state import (
     InteractiveState,
     MemoryState,
     create_state_class,
-    get_state_features,
 )
+
+
+def _get_state_features(state_dict: Dict[str, Any]) -> Set[str]:
+    """Detect features from state dictionary."""
+    features = set()
+    if state_dict.get("user_interaction_required") or state_dict.get("pending_questions"):
+        features.add("interactive")
+    if state_dict.get("memory_matches") or state_dict.get("application_context"):
+        features.add("memory")
+    if state_dict.get("is_streaming") or state_dict.get("chunk_results"):
+        features.add("streaming")
+    return features
 
 
 class StateAdapter:
@@ -34,7 +45,7 @@ class StateAdapter:
             state_dict = legacy_state
 
         # Detect which features are being used
-        features = get_state_features(state_dict)
+        features = _get_state_features(state_dict)
 
         # Get appropriate state class
         target_class = create_state_class(features)
@@ -113,7 +124,7 @@ class StateAdapter:
         else:
             state_dict = state
 
-        return get_state_features(state_dict)
+        return _get_state_features(state_dict)
 
     @staticmethod
     def create_minimal_state(

@@ -10,16 +10,19 @@ This example demonstrates:
 
 import asyncio
 from typing import Optional
-from langgraph.checkpoint.sqlite import SqliteSaver
+try:
+    from langgraph.checkpoint.sqlite import SqliteSaver
+except ImportError:
+    SqliteSaver = None
 
-from ..core.improved_graph import create_improved_graph
-from ..core.unified_state import UnifiedState, LogAnalysisInput
+from ..graph import create_graph
+from ..state import migrate_legacy_state
 
 
 async def analyze_with_streaming():
     """Example: Analyze a large log file with streaming."""
     # Create graph with streaming support
-    graph = create_improved_graph(features={"streaming"})
+    graph = create_graph()
     
     # Large log content (simulated)
     large_log = "\n".join([
@@ -28,15 +31,15 @@ async def analyze_with_streaming():
     ] * 1000)  # ~10MB of logs
     
     # Create initial state
-    initial_state = UnifiedState(
-        messages=[],
-        log_content=large_log,
-        features={"streaming"},
-        environment_details={
+    # Create initial state using legacy format for compatibility
+    initial_state = migrate_legacy_state({
+        "messages": [],
+        "log_content": large_log,
+        "environment_details": {
             "system": "production",
             "region": "us-east-1"
         }
-    )
+    })
     
     # Run analysis
     config = {
@@ -58,8 +61,11 @@ async def analyze_with_streaming():
 async def analyze_with_checkpointing():
     """Example: Analyze with checkpointing for resumption."""
     # Create graph with checkpointing
+    if SqliteSaver is None:
+        print("SqliteSaver not available - skipping checkpointing example")
+        return None
     checkpointer = SqliteSaver.from_conn_string("analysis_checkpoints.db")
-    graph = create_improved_graph(features={"memory", "streaming"})
+    graph = create_graph()
     
     # Configure with checkpointer
     graph = graph.with_config(checkpointer=checkpointer)
@@ -72,11 +78,11 @@ async def analyze_with_checkpointing():
     2024-01-20 10:00:03 FATAL [app.main] Application crashed due to OOM
     """
     
-    initial_state = UnifiedState(
-        messages=[],
-        log_content=log_content,
-        features={"memory", "checkpointing"}
-    )
+    # Create initial state using legacy format
+    initial_state = migrate_legacy_state({
+        "messages": [],
+        "log_content": log_content
+    })
     
     config = {
         "configurable": {
@@ -102,7 +108,7 @@ async def analyze_with_checkpointing():
 
 async def analyze_different_log_types():
     """Example: Analyze different log types with specialized subgraphs."""
-    graph = create_improved_graph()
+    graph = create_graph()
     
     # Different log examples
     log_examples = {
@@ -128,11 +134,10 @@ async def analyze_different_log_types():
     for log_type, log_content in log_examples.items():
         print(f"\nAnalyzing {log_type} logs...")
         
-        state = UnifiedState(
-            messages=[],
-            log_content=log_content,
-            features=set()
-        )
+        state = migrate_legacy_state({
+            "messages": [],
+            "log_content": log_content
+        })
         
         config = {
             "configurable": {
@@ -148,7 +153,7 @@ async def analyze_different_log_types():
 
 async def analyze_with_retry_fallback():
     """Example: Demonstrate retry with fallback tools."""
-    graph = create_improved_graph(features={"interactive"})
+    graph = create_graph()
     
     # Ambiguous log that might need retry
     ambiguous_log = """
@@ -157,11 +162,10 @@ async def analyze_with_retry_fallback():
     2024-01-20 10:00:02 WARN [unknown] Resource unavailable
     """
     
-    state = UnifiedState(
-        messages=[],
-        log_content=ambiguous_log,
-        features={"interactive", "retry_fallback"}
-    )
+    state = migrate_legacy_state({
+        "messages": [],
+        "log_content": ambiguous_log
+    })
     
     config = {
         "configurable": {

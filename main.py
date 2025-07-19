@@ -55,7 +55,6 @@ validate_and_set_api_keys()
 
 
 async def process_log_minimal(
-def process_log_minimal(
     log_content: str,
     environment_details: Optional[Dict[str, Any]] = None
 ):
@@ -64,10 +63,27 @@ def process_log_minimal(
     
     state = {
         "log_content": log_content,
-        "environment_details": environment_details
+        "environment_details": environment_details or {}
     }
     
-    result = graph.invoke(state)
+    # Configuration
+    config = {
+        "configurable": {
+            "model": "gemini:gemini-1.5-flash",
+            "max_search_results": 3,
+        }
+    }
+    
+    # Process
+    result = None
+    async for event in graph.astream(
+        state,
+        config,
+        stream_mode="values"
+    ):
+        if "analysis_result" in event and event["analysis_result"]:
+            result = event["analysis_result"]
+    
     return result
 
 
@@ -128,45 +144,6 @@ def process_log(
     }
     
     result = graph.invoke(state)
-    return result
-    environment_details: Optional[Dict[str, Any]] = None
-):
-    """Process a log file with minimal overhead.
-    
-    Args:
-        log_content: The content of the log file to analyze
-        environment_details: Optional environment context
-        
-    Returns:
-        Analysis results
-    """
-    # Create minimal graph
-    graph = GraphFactory.create_graph(mode="minimal")
-    
-    # Create minimal state
-    state = {
-        "log_content": log_content,
-        "environment_details": environment_details or {}
-    }
-    
-    # Configuration
-    config = {
-        "configurable": {
-            "model": "gemini:gemini-1.5-flash",
-            "max_search_results": 3,
-        }
-    }
-    
-    # Process
-    result = None
-    async for event in graph.astream(
-        state,
-        config,
-        stream_mode="values"
-    ):
-        if "analysis_result" in event and event["analysis_result"]:
-            result = event["analysis_result"]
-    
     return result
 
 
@@ -337,12 +314,12 @@ async def process_log_improved(
     # Create improved graph
     graph = create_improved_analyzer(features=features)
     
-    # Import UnifiedState if available
+    # Import State if available
     try:
-        from src.log_analyzer_agent.core.unified_state import UnifiedState
+        from src.log_analyzer_agent.state import State
         
         # Create unified state
-        state = UnifiedState(
+        state = State(
             messages=[],
             log_content=log_content,
             features=features or set(),
@@ -523,17 +500,6 @@ async def main():
 
 if __name__ == "__main__":
     import argparse
-import asyncio
-import os
-import sys
-from typing import Dict, Any, Optional
-
-# Add the repository root to the Python path
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-
-from src.log_analyzer_agent.graph_factory import GraphFactory
-from src.log_analyzer_agent.validation import APIKeyValidator
-from src.log_analyzer_agent.state import CoreState, create_state_class
     
     parser = argparse.ArgumentParser(description="Log Analyzer Agent v2")
     parser.add_argument("--mode", choices=["demo", "benchmark", "minimal", "interactive", "memory", "improved"], 

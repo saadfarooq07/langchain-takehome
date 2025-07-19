@@ -11,6 +11,14 @@ from .graph import (
 )
 from .state_compat import StateAdapter
 
+# Import improved implementation if enabled
+USE_IMPROVED_IMPLEMENTATION = os.getenv("USE_IMPROVED_LOG_ANALYZER", "false").lower() == "true"
+if USE_IMPROVED_IMPLEMENTATION:
+    try:
+        from .core.improved_graph import create_improved_graph
+    except ImportError:
+        USE_IMPROVED_IMPLEMENTATION = False
+
 
 class GraphFactory:
     """Factory for creating log analyzer graphs with various configurations."""
@@ -20,6 +28,7 @@ class GraphFactory:
         mode: str = "auto",
         features: Optional[Set[str]] = None,
         use_legacy: bool = False,
+        use_improved: Optional[bool] = None,
     ):
         """Create a graph with the specified configuration.
 
@@ -30,12 +39,25 @@ class GraphFactory:
                 - "interactive": With user interaction support
                 - "memory": With full memory support (requires DB)
                 - "legacy": Use the old state system
+                - "improved": Use the improved implementation
             features: Explicit features to enable (overrides mode)
             use_legacy: Force use of legacy state system
+            use_improved: Force use of improved implementation (overrides env var)
 
         Returns:
             Configured graph instance
         """
+        # Check if we should use improved implementation
+        should_use_improved = use_improved if use_improved is not None else USE_IMPROVED_IMPLEMENTATION
+        
+        if should_use_improved or mode == "improved":
+            if not USE_IMPROVED_IMPLEMENTATION and use_improved is None:
+                raise ValueError(
+                    "Improved implementation not available. "
+                    "Set USE_IMPROVED_LOG_ANALYZER=true or ensure core modules are installed."
+                )
+            return create_improved_graph(features=features)
+        
         # Handle explicit feature set
         if features is not None:
             return create_graph(features=features)
@@ -117,3 +139,16 @@ def get_graph(lightweight: bool = False, use_legacy: bool = False):
         return create_minimal_graph()
     else:
         return create_interactive_graph()
+
+
+# Convenience function for creating improved graph
+def create_improved_analyzer(features: Optional[Set[str]] = None):
+    """Create an improved log analyzer graph.
+    
+    Args:
+        features: Set of features to enable (e.g., {"streaming", "memory"})
+        
+    Returns:
+        Improved graph instance
+    """
+    return GraphFactory.create_graph(mode="improved", features=features)

@@ -30,8 +30,29 @@ from .state import (
     create_state_class,
 )
 from .configuration import Configuration
-from .graph_factory import GraphFactory, get_graph
+from .graph_factory import GraphFactory, get_graph, create_improved_analyzer
 from .state_compat import StateAdapter
+
+# Conditionally import improved components
+import os
+if os.getenv("USE_IMPROVED_LOG_ANALYZER", "false").lower() == "true":
+    try:
+        from .core import (
+            UnifiedState,
+            LogAnalysisInput,
+            LogAnalysisOutput,
+            create_improved_graph,
+            CircuitBreaker,
+            ExecutionController,
+            APIManager,
+            ResourceManager,
+            ErrorRecoveryManager,
+        )
+        IMPROVED_AVAILABLE = True
+    except ImportError:
+        IMPROVED_AVAILABLE = False
+else:
+    IMPROVED_AVAILABLE = False
 
 __all__ = [
     "graph",
@@ -41,6 +62,7 @@ __all__ = [
     "Configuration",
     "GraphFactory",
     "get_graph",
+    "create_improved_analyzer",
     "CoreState",
     "InteractiveState",
     "MemoryState",
@@ -48,5 +70,19 @@ __all__ = [
     "StateAdapter",
 ]
 
+# Add improved components to exports if available
+if IMPROVED_AVAILABLE:
+    __all__.extend([
+        "UnifiedState",
+        "LogAnalysisInput",
+        "LogAnalysisOutput",
+        "create_improved_graph",
+        "CircuitBreaker",
+        "ExecutionController",
+        "APIManager",
+        "ResourceManager",
+        "ErrorRecoveryManager",
+    ])
+
 # Version info
-__version__ = "2.0.0"
+__version__ = "2.1.0"  # Bumped for improved implementation

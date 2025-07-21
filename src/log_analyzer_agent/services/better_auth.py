@@ -10,6 +10,8 @@ import bcrypt
 import jwt
 from pydantic import BaseModel, Field
 from enum import Enum
+from google.oauth2 import id_token
+from google.auth.transport import requests
 
 from ..models.user import UserRole
 from ..models.tenant import Tenant
@@ -472,6 +474,173 @@ class BetterAuth:
             
         except Exception as e:
                 return False, f"Error during authentication: {str(e)}", None
+    
+    async def authenticate_google_user(
+        self,
+        credential: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+        """Authenticate user via Google OAuth."""
+        try:
+            # Verify the Google ID token
+            google_client_id = os.getenv("GOOGLE_CLIENT_ID")
+            if not google_client_id:
+                return False, "Google OAuth not configured", None
+            
+            try:
+                # Verify the token
+                idinfo = id_token.verify_oauth2_token(
+                    credential, 
+                    requests.Request(), 
+                    google_client_id
+                )
+                
+                # Check if token is from our app
+                if idinfo['aud'] != google_client_id:
+                    return False, "Invalid token audience", None
+                
+                # Extract user info
+                email = idinfo.get('email')
+                email_verified = idinfo.get('email_verified', False)
+                full_name = idinfo.get('name')
+                google_id = idinfo.get('sub')
+                
+                if not email or not email_verified:
+                    return False, "Email not verified", None
+                
+            except ValueError:
+                return False, "Invalid Google token", None
+            
+            pool = await self._get_db_pool()
+            async with pool.acquire() as conn:
+                # Check if user exists
+                user = await conn.fetchrow(
+                    "SELECT id, email, full_name, is_active FROM users WHERE email = $1",
+                    email
+                )
+                
+                if not user:
+                    # Create new user
+                    user_id = await conn.fetchval("""
+                        INSERT INTO users (email, full_name, google_id, is_active, email_verified)
+                        VALUES ($1, $2, $3, TRUE, TRUE)
+                        RETURNING id
+                    """, email, full_name, google_id)
+                    
+                    # Create personal tenant for the user
+                    tenant_slug = email.split('@')[0].lower().replace('.', '-').replace('_', '-')
+                    tenant_name = f"{full_name or email.split('@')[0]}'s Workspace"
+                    
+                    # Ensure unique slug
+                    counter = 1
+                    while await conn.fetchval("SELECT 1 FROM tenants WHERE slug = $1", tenant_slug):
+                        tenant_slug = f"{email.split('@')[0].lower()}-{counter}"
+                        counter += 1
+                    
+                    tenant_id = await conn.fetchval("""
+                        INSERT INTO tenants (name, slug, owner_id, plan, is_active)
+                        VALUES ($1, $2, $3, 'free', TRUE)
+                        RETURNING id
+                    """, tenant_name, tenant_slug, user_id)
+                    
+                    # Add user to tenant as owner
+                    await conn.execute("""
+                        INSERT INTO tenant_users (tenant_id, user_id, role, is_active)
+                        VALUES ($1, $2, 'owner', TRUE)
+                    """, tenant_id, user_id)
+                    
+                    user = {
+                        'id': user_id,
+                        'email': email,
+                        'full_name': full_name,
+                        'is_active': True
+                    }
+                else:
+                    # Update Google ID if not set
+                    if not await conn.fetchval("SELECT google_id FROM users WHERE id = $1", user['id']):
+                        await conn.execute(
+                            "UPDATE users SET google_id = $1, email_verified = TRUE WHERE id = $2",
+                            google_id, user['id']
+                        )
+                
+                if not user["is_active"]:
+                    return False, "Account is disabled", None
+                
+                # Get user's tenants
+                tenant_memberships = await conn.fetch("""
+                    SELECT t.id, t.slug, t.name, tu.role
+                    FROM tenants t
+                    JOIN tenant_users tu ON t.id = tu.tenant_id
+                    WHERE tu.user_id = $1 AND tu.is_active = TRUE AND t.is_active = TRUE
+                    ORDER BY tu.created_at
+                """, user["id"])
+                
+                if not tenant_memberships:
+                    return False, "User has no active tenant memberships", None
+                
+                # Use first tenant
+                selected_tenant = tenant_memberships[0]
+                
+                # Create tokens
+                token_data = {
+                    "user_id": str(user["id"]),
+                    "email": user["email"],
+                    "tenant_id": str(selected_tenant["id"]),
+                    "tenant_slug": selected_tenant["slug"],
+                    "role": selected_tenant["role"]
+                }
+                
+                access_token = self._create_token(token_data, TokenType.ACCESS)
+                refresh_token = self._create_token(token_data, TokenType.REFRESH)
+                
+                # Store session
+                expires_at = datetime.utcnow() + timedelta(minutes=self.config.access_token_expire_minutes)
+                refresh_expires_at = datetime.utcnow() + timedelta(days=self.config.refresh_token_expire_days)
+                
+                await conn.execute("""
+                    INSERT INTO user_sessions 
+                    (user_id, tenant_id, token, refresh_token, ip_address, user_agent, expires_at, refresh_expires_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """, user["id"], selected_tenant["id"], access_token, refresh_token, 
+                    ip_address, user_agent, expires_at, refresh_expires_at)
+                
+                # Update last login
+                await conn.execute(
+                    "UPDATE users SET last_login_at = NOW() WHERE id = $1",
+                    user["id"]
+                )
+                
+                return True, "Authentication successful", {
+                    "user": {
+                        "id": str(user["id"]),
+                        "email": user["email"],
+                        "full_name": user["full_name"]
+                    },
+                    "tenant": {
+                        "id": str(selected_tenant["id"]),
+                        "slug": selected_tenant["slug"],
+                        "name": selected_tenant["name"],
+                        "role": selected_tenant["role"]
+                    },
+                    "tokens": {
+                        "access_token": access_token,
+                        "refresh_token": refresh_token,
+                        "token_type": "bearer"
+                    },
+                    "available_tenants": [
+                        {
+                            "id": str(t["id"]),
+                            "slug": t["slug"],
+                            "name": t["name"],
+                            "role": t["role"]
+                        }
+                        for t in tenant_memberships
+                    ]
+                }
+                
+        except Exception as e:
+            return False, f"Error during Google authentication: {str(e)}", None
     
     async def verify_session(
         self,

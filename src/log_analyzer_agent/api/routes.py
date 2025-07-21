@@ -5,9 +5,12 @@ import time
 import uuid
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+from langgraph.store.memory import InMemoryStore
+from langgraph.checkpoint.memory import MemorySaver
 
 from ..services.auth_service import AuthService
 from ..services.memory_service import MemoryService
+from ..services.store_manager import StoreManager
 from ..graph import create_graph
 from ..state import State
 from .auth import get_auth_service, get_current_user, get_current_user_optional
@@ -382,8 +385,8 @@ async def search_memory(
     """Search user's memory."""
     start_time = time.time()
 
-    # Create memory service
-    graph = create_graph()
+    # Get store from StoreManager
+    store = StoreManager.get_store()
     memory_service = MemoryService(store)
 
     try:
@@ -405,63 +408,8 @@ async def search_memory(
         )
 
     finally:
-        await store.close()
-        await checkpointer.close()
-
-
-@router.get("/history", response_model=AnalysisHistoryResponse)
-async def get_analysis_history(
-    page: int = 1,
-    page_size: int = 10,
-    application_name: Optional[str] = None,
-    current_user: UserResponse = Depends(get_current_user),
-):
-    """Get user's analysis history."""
-
-    # Create memory service
-    graph = create_graph()
-    memory_service = MemoryService(store)
-
-    try:
-        # Search analysis history
-        results = await memory_service.search_similar_issues(
-            current_user.id, application_name or "all", "analysis history", page_size
-        )
-
-        return AnalysisHistoryResponse(
-            analyses=results, total_count=len(results), page=page, page_size=page_size
-        )
-
-    finally:
-        await store.close()
-        await checkpointer.close()
-
-
-@router.get("/applications", response_model=List[str])
-async def get_user_applications(current_user: UserResponse = Depends(get_current_user)):
-    """Get list of applications the user has analyzed."""
-
-    # Create memory service
-    graph = create_graph()
-    memory_service = MemoryService(store)
-
-    try:
-        # Search for unique application names
-        results = await memory_service.search_similar_issues(
-            current_user.id, "all", "application_name", 100
-        )
-
-        # Extract unique application names
-        applications = set()
-        for result in results:
-            if "application_name" in result:
-                applications.add(result["application_name"])
-
-        return list(applications)
-
-    finally:
-        await store.close()
-        await checkpointer.close()
+        # InMemoryStore doesn't need to be closed
+        pass
 
 
 @router.get(
@@ -472,8 +420,8 @@ async def get_application_context(
 ):
     """Get context for a specific application."""
 
-    # Create memory service
-    graph = create_graph()
+    # Get store from StoreManager
+    store = StoreManager.get_store()
     memory_service = MemoryService(store)
 
     try:
@@ -490,8 +438,8 @@ async def get_application_context(
         )
 
     finally:
-        await store.close()
-        await checkpointer.close()
+        # InMemoryStore doesn't need to be closed
+        pass
 
 
 @router.post(
@@ -504,8 +452,8 @@ async def update_application_context(
 ):
     """Update context for a specific application."""
 
-    # Create memory service
-    graph = create_graph()
+    # Get store from StoreManager
+    store = StoreManager.get_store()
     memory_service = MemoryService(store)
 
     try:
@@ -523,8 +471,88 @@ async def update_application_context(
         return context
 
     finally:
-        await store.close()
-        await checkpointer.close()
+        # InMemoryStore doesn't need to be closed
+        pass
+
+
+@router.get("/threads")
+async def get_user_threads(
+    page: int = 1,
+    page_size: int = 20,
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Get user's analysis threads from LangGraph memory."""
+    
+    # Get store from StoreManager
+    store = StoreManager.get_store()
+    memory_service = MemoryService(store)
+    
+    try:
+        # Get all user's analyses with thread information
+        results = await memory_service.search_similar_issues(
+            current_user.id, "all", "analysis_history", page_size * page
+        )
+        
+        # Group by thread_id and get latest from each thread
+        threads_map = {}
+        for result in results:
+            thread_id = result.get("thread_id", f"thread_{result.get('timestamp', 'unknown')}")
+            if thread_id not in threads_map or result.get("timestamp", 0) > threads_map[thread_id].get("timestamp", 0):
+                threads_map[thread_id] = result
+        
+        # Convert to list and paginate
+        all_threads = list(threads_map.values())
+        all_threads.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+        
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_threads = all_threads[start_idx:end_idx]
+        
+        # Format threads for response
+        formatted_threads = []
+        for thread in paginated_threads:
+            # Extract analysis result if available
+            analysis_result = thread.get("analysis_result", {})
+            issues = analysis_result.get("issues", [])
+            
+            # Get the highest severity issue
+            severity = "low"
+            if issues:
+                severity_order = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+                issues_sorted = sorted(issues, key=lambda x: severity_order.get(x.get("severity", "low"), 0), reverse=True)
+                severity = issues_sorted[0].get("severity", "low")
+            
+            # Get log preview
+            log_content = thread.get("log_content", "")
+            if not log_content and "messages" in thread:
+                # Try to extract from messages
+                for msg in thread.get("messages", []):
+                    if hasattr(msg, "content") and "log:" in msg.content:
+                        log_content = msg.content.split("log:", 1)[1].strip()
+                        break
+            
+            formatted_threads.append({
+                "thread_id": thread.get("thread_id", f"thread_{thread.get('timestamp', 'unknown')}"),
+                "timestamp": thread.get("timestamp", time.time()),
+                "application_name": thread.get("application_name", analysis_result.get("application_name", "Unknown")),
+                "summary": analysis_result.get("summary", thread.get("summary", "Log analysis")),
+                "issue_count": len(issues),
+                "severity": severity,
+                "status": thread.get("status", "completed"),
+                "log_preview": log_content[:200] + "..." if log_content else "No preview available",
+                "analysis_result": analysis_result  # Include full result for frontend
+            })
+        
+        return {
+            "threads": formatted_threads,
+            "total_count": len(all_threads),
+            "page": page,
+            "page_size": page_size
+        }
+        
+    finally:
+        # InMemoryStore doesn't need to be closed
+        pass
 
 
 @router.get("/health")

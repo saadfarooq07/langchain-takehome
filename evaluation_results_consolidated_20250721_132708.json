@@ -1,0 +1,9 @@
+{
+  "dataset": "log-analyzer-evaluation-train",
+  "experiment_prefix": "log-analyzer-gemi-groq-20250721_132708",
+  "timestamp": "20250721_132708",
+  "implementation": "main",
+  "total_examples": 93,
+  "errors": 0,
+  "metrics": {}
+}

@@ -1,0 +1,84 @@
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run tests
+        run: bun test
+
+      - name: Run linting
+        run: bun run lint
+
+      - name: Run type checking
+        run: bun run typecheck
+
+      - name: Build application
+        run: bun run build:cloudflare
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_AUTH_API_URL: ${{ secrets.VITE_AUTH_API_URL }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      - name: Deploy to Cloudflare Workers (Staging)
+        if: github.ref == 'refs/heads/staging'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --env staging
+          secrets: |
+            VITE_GOOGLE_CLIENT_ID
+            VITE_API_URL
+            VITE_AUTH_API_URL
+            VITE_SUPABASE_URL
+            VITE_SUPABASE_ANON_KEY
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.STAGING_GOOGLE_CLIENT_ID }}
+          VITE_API_URL: ${{ secrets.STAGING_API_URL }}
+          VITE_AUTH_API_URL: ${{ secrets.STAGING_AUTH_API_URL }}
+          VITE_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}
+
+      - name: Deploy to Cloudflare Workers (Production)
+        if: github.ref == 'refs/heads/main'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --env production
+          secrets: |
+            VITE_GOOGLE_CLIENT_ID
+            VITE_API_URL
+            VITE_AUTH_API_URL
+            VITE_SUPABASE_URL
+            VITE_SUPABASE_ANON_KEY
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.PRODUCTION_GOOGLE_CLIENT_ID }}
+          VITE_API_URL: ${{ secrets.PRODUCTION_API_URL }}
+          VITE_AUTH_API_URL: ${{ secrets.PRODUCTION_AUTH_API_URL }}
+          VITE_SUPABASE_URL: ${{ secrets.PRODUCTION_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.PRODUCTION_SUPABASE_ANON_KEY }}

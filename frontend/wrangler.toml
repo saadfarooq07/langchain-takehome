@@ -1,0 +1,23 @@
+name = "allogator-frontend"
+main = "worker/index.ts"
+compatibility_date = "2024-01-01"
+account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
+
+[site]
+bucket = "./dist"
+
+[env.production]
+routes = [
+  { pattern = "allogator.ai", zone_name = "allogator.ai" },
+  { pattern = "www.allogator.ai", zone_name = "allogator.ai" }
+]
+
+[env.staging]
+routes = [
+  { pattern = "staging.allogator.ai", zone_name = "allogator.ai" }
+]
+
+# Secrets will be set via wrangler secret
+# wrangler secret put VITE_GOOGLE_CLIENT_ID
+# wrangler secret put VITE_API_URL
+# wrangler secret put VITE_AUTH_API_URL

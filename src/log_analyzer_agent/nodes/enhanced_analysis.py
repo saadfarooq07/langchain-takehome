@@ -299,8 +299,12 @@ async def enhanced_analyze_logs(
     print(f"[DEBUG] Prompt length: {len(prompt_content)} chars")
     print(f"[DEBUG] Using template for: {log_type}")
     
+    # Get configuration from runnable config
+    from ..configuration import Configuration
+    configuration = Configuration.from_runnable_config(config)
+    
     # Use pooled model without tools first to get the analysis
-    async with pooled_model(config) as raw_model:
+    async with pooled_model(configuration.primary_model) as raw_model:
         # Get analysis without tools
         messages = [HumanMessage(content=prompt_content)]
         response = cast(AIMessage, await raw_model.ainvoke(messages))

@@ -38,6 +38,11 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 
+class GoogleAuthRequest(BaseModel):
+    """Request model for Google OAuth authentication."""
+    credential: str
+
+
 @auth_router.post("/tenants")
 async def create_tenant(
     request: TenantCreateRequest,
@@ -84,6 +89,34 @@ async def login(
         email=request.email,
         password=request.password,
         tenant_slug=request.tenant_slug,
+        ip_address=ip_address,
+        user_agent=user_agent
+    )
+    
+    if not success:
+        raise HTTPException(status_code=401, detail=message)
+    
+    return {
+        "user": data["user"],
+        "tenant": data["tenant"],
+        "tokens": data["tokens"],
+        "available_tenants": data["available_tenants"]
+    }
+
+
+@auth_router.post("/google")
+async def google_auth(
+    request: GoogleAuthRequest,
+    req: Request,
+    auth_service: BetterAuth = Depends(get_auth_service)
+):
+    """Authenticate user via Google OAuth and return access tokens."""
+    # Get client info
+    ip_address = req.client.host if req.client else None
+    user_agent = req.headers.get("user-agent")
+    
+    success, message, data = await auth_service.authenticate_google_user(
+        credential=request.credential,
         ip_address=ip_address,
         user_agent=user_agent
     )
@@ -153,14 +186,12 @@ async def logout(
     current_token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
     
     if current_token:
-        conn = await auth_service._get_db_connection()
-        try:
+        pool = await auth_service._get_db_pool()
+        async with pool.acquire() as conn:
             await conn.execute(
                 "UPDATE user_sessions SET is_active = FALSE WHERE token = $1",
                 current_token
             )
-        finally:
-            await conn.close()
     
     return {"message": "Logged out successfully"}
 

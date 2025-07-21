@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { analyzeLog, analyzeLogStream } from '../services/api';
+import { analyzeLog, analyzeLogStream, authService, analysisService } from '../services/api';
 import DOMPurify from 'dompurify';
 
 // --- SVG Icons ---
@@ -44,15 +44,46 @@ const UploadIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const SparklesIcon = ({ className }: { className?: string }) => (
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 3L14.5 8.5L20 11L14.5 13.5L12 19L9.5 13.5L4 11L9.5 8.5L12 3Z" />
+        <path d="M5 3L6 5L8 6L6 7L5 9L4 7L2 6L4 5L5 3Z" />
+        <path d="M19 15L20 17L22 18L20 19L19 21L18 19L16 18L18 17L19 15Z" />
+    </svg>
+);
+
+const ArrowRightIcon = ({ className }: { className?: string }) => (
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+        <polyline points="12 5 19 12 12 19"></polyline>
+    </svg>
+);
+
+const CheckIcon = ({ className }: { className?: string }) => (
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="20 6 9 17 4 12"></polyline>
+    </svg>
+);
+
 // --- Components ---
 
-const Sidebar = ({ activeView, setActiveView }: { activeView: string; setActiveView: (view: string) => void }) => {
+const Sidebar = ({ activeView, setActiveView, isGuest }: { activeView: string; setActiveView: (view: string) => void; isGuest: boolean }) => {
     const navItems = [
         { name: 'Dashboard', icon: TerminalIcon },
         { name: 'History', icon: HistoryIcon },
         { name: 'Applications', icon: AppsIcon },
         { name: 'Settings', icon: SettingsIcon },
     ];
+
+    const handleLogout = async () => {
+        if (window.confirm('Are you sure you want to log out?')) {
+            await authService.logout();
+        }
+    };
+
+    // Get user info from localStorage
+    const userStr = localStorage.getItem('allogator_user');
+    const user = userStr ? JSON.parse(userStr) : null;
 
     return (
         <div className="flex flex-col w-16 md:w-64 bg-gray-900 text-gray-200 border-r border-gray-800">
@@ -77,15 +108,38 @@ const Sidebar = ({ activeView, setActiveView }: { activeView: string; setActiveV
                 ))}
             </nav>
             <div className="p-4 border-t border-gray-800">
-                <div className="flex items-center">
-                    <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center font-bold text-gray-900">
-                        U
+                {isGuest ? (
+                    <a 
+                        href="/signup"
+                        className="flex items-center justify-center w-full py-2 px-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-medium rounded-lg hover:from-green-600 hover:to-emerald-600 transition-all transform hover:scale-105"
+                    >
+                        <span className="hidden md:inline">Sign Up Free</span>
+                        <span className="md:hidden">Sign Up</span>
+                    </a>
+                ) : (
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center">
+                            <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center font-bold text-gray-900">
+                                {user?.full_name ? user.full_name.charAt(0).toUpperCase() : 'U'}
+                            </div>
+                            <div className="hidden md:block ml-3">
+                                <p className="text-sm font-semibold text-white">{user?.full_name || user?.email || 'User'}</p>
+                                <span className="text-xs text-green-400">{user?.tenant?.name || 'READY'}</span>
+                            </div>
+                        </div>
+                        <button
+                            onClick={handleLogout}
+                            className="hidden md:block text-gray-400 hover:text-white transition-colors text-sm"
+                            title="Logout"
+                        >
+                            <svg className="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                                <polyline points="16 17 21 12 16 7"></polyline>
+                                <line x1="21" y1="12" x2="9" y2="12"></line>
+                            </svg>
+                        </button>
                     </div>
-                    <div className="hidden md:block ml-3">
-                        <p className="text-sm font-semibold text-white">User</p>
-                        <span className="text-xs text-green-400">READY</span>
-                    </div>
-                </div>
+                )}
             </div>
         </div>
     );
@@ -106,13 +160,27 @@ interface AnalysisHistory {
     analysis?: any;
 }
 
-const Dashboard = () => {
+const Dashboard = ({ isGuest, guestAnalysisCount, setGuestAnalysisCount, onUpgradePrompt, history, setHistory, fetchAnalysisHistory }: {
+    isGuest: boolean;
+    guestAnalysisCount: number;
+    setGuestAnalysisCount: (count: number) => void;
+    onUpgradePrompt: () => void;
+    history: AnalysisHistory[];
+    setHistory: (history: AnalysisHistory[]) => void;
+    fetchAnalysisHistory: () => void;
+}) => {
     const [input, setInput] = useState('');
     const [output, setOutput] = useState<AnalysisMessage[]>([
-      { type: 'agent', text: 'Log Analyzer is ready. Paste your logs or upload a file to begin analysis.' },
+      { 
+        type: 'agent', 
+        text: isGuest && guestAnalysisCount === 0 
+          ? '👋 Welcome to Allogator Beta! You have 5 free analyses - paste your logs below to see instant AI-powered analysis. No signup required!' 
+          : isGuest 
+          ? `Log Analyzer is ready. You have ${5 - guestAnalysisCount} free analyses remaining.` 
+          : 'Log Analyzer is ready. Paste your logs or upload a file to begin analysis.' 
+      },
     ]);
     const [isProcessing, setIsProcessing] = useState(false);
-    const [history, setHistory] = useState<AnalysisHistory[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const outputEndRef = useRef<HTMLDivElement>(null);
 
@@ -139,11 +207,11 @@ const Dashboard = () => {
         if (result.executive_summary) {
             html += '<div class="bg-gray-800 rounded-lg p-4">';
             html += '<h3 class="text-green-400 font-semibold mb-2">Executive Summary</h3>';
-            html += `<p class="text-gray-300">${result.executive_summary.overview || 'Analysis complete.'}</p>`;
+            html += `<p class="text-gray-300">${DOMPurify.sanitize(result.executive_summary.overview || result.executive_summary || 'Analysis complete.')}</p>`;
             if (result.executive_summary.critical_issues?.length > 0) {
-                html += '<div class="mt-2"><span class="text-red-400">Critical Issues:</span><ul class="list-disc list-inside mt-1">';
+                html += '<div class="mt-2"><span class="text-red-400 font-semibold">Critical Issues:</span><ul class="list-disc list-inside mt-1">';
                 result.executive_summary.critical_issues.forEach((issue: string) => {
-                    html += `<li class="text-gray-300">${issue}</li>`;
+                    html += `<li class="text-gray-300">${DOMPurify.sanitize(issue)}</li>`;
                 });
                 html += '</ul></div>';
             }
@@ -167,12 +235,12 @@ const Dashboard = () => {
                 html += `<span class="${severityColor} font-semibold">${issue.severity?.toUpperCase() || 'INFO'}</span>`;
                 if (issue.type && issue.type !== 'general' && issue.type !== 'undefined') {
                     html += `<span class="text-gray-400">|</span>`;
-                    html += `<span class="text-gray-300">${issue.type}</span>`;
+                    html += `<span class="text-gray-300">${DOMPurify.sanitize(issue.type)}</span>`;
                 }
                 html += `</div>`;
-                html += `<p class="text-gray-300">${issue.description}</p>`;
+                html += `<p class="text-gray-300">${DOMPurify.sanitize(issue.description)}</p>`;
                 if (issue.root_cause) {
-                    html += `<p class="text-sm text-gray-400 mt-1"><strong>Root Cause:</strong> ${issue.root_cause}</p>`;
+                    html += `<p class="text-sm text-gray-400 mt-1"><strong>Root Cause:</strong> ${DOMPurify.sanitize(issue.root_cause)}</p>`;
                 }
                 html += '</div>';
             });
@@ -253,8 +321,23 @@ const Dashboard = () => {
     const handleAnalysis = async () => {
         if (input.trim() === '' || isProcessing) return;
         
+        // Check guest limit (5 analyses during beta)
+        if (isGuest && guestAnalysisCount >= 5) {
+            onUpgradePrompt();
+            return;
+        }
+        
         setIsProcessing(true);
-        const newOutput = [...output, { type: 'user' as const, text: input.length > 500 ? `[Log file: ${input.length} characters]` : input }];
+        // Format user input for better display
+        let userText = input;
+        if (input.length > 500) {
+            // For large logs, show a preview with proper formatting
+            const lines = input.split('\n');
+            const preview = lines.slice(0, 10).join('\n');
+            const remainingLines = lines.length - 10;
+            userText = `${preview}${remainingLines > 0 ? `\n... (${remainingLines} more lines, ${input.length} total characters)` : ''}`;
+        }
+        const newOutput = [...output, { type: 'user' as const, text: userText }];
         setOutput(newOutput);
         
         // Add initial processing message
@@ -265,17 +348,111 @@ const Dashboard = () => {
         setOutput([...newOutput, processingMessage]);
         
         try {
-            let analysisResult: any = null;
-            let progressUpdates: string[] = [];
-            
-            // Use streaming API
-            await analyzeLogStream(
-                {
+            // For guest users, use the simpler non-streaming API
+            if (isGuest) {
+                // Show analyzing message
+                const analyzingMessage = { 
+                    type: 'agent' as const, 
+                    text: `<div class="bg-gray-800 rounded-lg p-4">
+                        <p class="text-gray-300">Analyzing your logs...</p>
+                        <div class="mt-2 w-full bg-gray-700 rounded-full h-2">
+                            <div class="bg-green-500 h-2 rounded-full animate-pulse" style="width: 100%"></div>
+                        </div>
+                    </div>`
+                };
+                setOutput([...newOutput, analyzingMessage]);
+                
+                // Use non-streaming API
+                const result = await analyzeLog({
                     log_content: input,
                     application_name: 'user-app',
-                    enable_memory: false,
-                    enable_enhanced_analysis: true
-                },
+                    enable_memory: false
+                });
+                
+                // Format and display the result
+                const formattedResult = formatAnalysisResult(result);
+                setOutput([...newOutput, { 
+                    type: 'agent' as const, 
+                    text: formattedResult,
+                    analysis: result 
+                }]);
+                
+                // Add to history
+                const historyEntry: AnalysisHistory = {
+                    id: Date.now().toString(),
+                    query: input.substring(0, 100) + (input.length > 100 ? '...' : ''),
+                    date: new Date().toISOString().split('T')[0],
+                    issues: result.issues?.length || 0,
+                    severity: result.issues?.[0]?.severity || 'low',
+                    analysis: result
+                };
+                
+                // Update parent component's history state
+                const updatedHistory = [historyEntry, ...history];
+                setHistory(updatedHistory);
+                
+                // If not guest, refresh history from server to get proper thread_id
+                if (!isGuest) {
+                    setTimeout(() => {
+                        fetchAnalysisHistory();
+                    }, 1000);
+                }
+                
+                // Update guest analysis count
+                const newCount = guestAnalysisCount + 1;
+                setGuestAnalysisCount(newCount);
+                localStorage.setItem('allogator_guest_analysis_count', newCount.toString());
+                
+                // Add upgrade prompts at strategic points
+                if (newCount === 1) {
+                    setTimeout(() => {
+                        setOutput(prev => [...prev, {
+                            type: 'agent',
+                            text: `<div class="bg-gradient-to-r from-green-900/20 to-emerald-900/20 border border-green-500/30 rounded-lg p-4 mt-4">
+                                <p class="text-green-300 font-semibold mb-2">🎉 Great analysis!</p>
+                                <p class="text-gray-300 text-sm">You have ${5 - newCount} free analyses remaining during our beta. Create an account anytime for unlimited access.</p>
+                            </div>`
+                        }]);
+                    }, 2000);
+                } else if (newCount === 3) {
+                    setTimeout(() => {
+                        setOutput(prev => [...prev, {
+                            type: 'agent',
+                            text: `<div class="bg-gradient-to-r from-blue-900/20 to-indigo-900/20 border border-blue-500/30 rounded-lg p-4 mt-4">
+                                <p class="text-blue-300 font-semibold mb-2">💡 Pro tip</p>
+                                <p class="text-gray-300 text-sm">You have ${5 - newCount} free analyses left. Sign up to save your analysis history and unlock advanced features!</p>
+                                <a href="/signup" class="inline-block mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
+                                    Create Free Account
+                                </a>
+                            </div>`
+                        }]);
+                    }, 2000);
+                } else if (newCount === 5) {
+                    setTimeout(() => {
+                        setOutput(prev => [...prev, {
+                            type: 'agent',
+                            text: `<div class="bg-gradient-to-r from-orange-900/20 to-red-900/20 border border-orange-500/30 rounded-lg p-4 mt-4">
+                                <p class="text-orange-300 font-semibold mb-2">🚀 That's your 5th free analysis!</p>
+                                <p class="text-gray-300 text-sm">You've used all your free beta analyses. Create an account to continue with unlimited access!</p>
+                                <a href="/signup" class="inline-block mt-3 px-4 py-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-lg text-sm font-medium transition-colors">
+                                    Sign Up to Continue
+                                </a>
+                            </div>`
+                        }]);
+                    }, 2000);
+                }
+            } else {
+                // For authenticated users, use streaming API
+                let analysisResult: any = null;
+                let progressUpdates: string[] = [];
+                
+                await analyzeLogStream(
+                    {
+                        log_content: input,
+                        application_name: 'user-app',
+                        enable_memory: false,
+                        enable_enhanced_analysis: true
+                    },
                 // onProgress
                 (progress) => {
                     console.log('Progress:', progress);
@@ -333,9 +510,56 @@ const Dashboard = () => {
                             analysis: analysisResult
                         };
                         setHistory([historyEntry, ...history]);
+                        
+                        // Update guest analysis count
+                        if (isGuest) {
+                            const newCount = guestAnalysisCount + 1;
+                            setGuestAnalysisCount(newCount);
+                            localStorage.setItem('allogator_guest_analysis_count', newCount.toString());
+                            
+                            // Add upgrade prompts at strategic points
+                            if (newCount === 1) {
+                                setTimeout(() => {
+                                    setOutput(prev => [...prev, {
+                                        type: 'agent',
+                                        text: `<div class="bg-gradient-to-r from-green-900/20 to-emerald-900/20 border border-green-500/30 rounded-lg p-4 mt-4">
+                                            <p class="text-green-300 font-semibold mb-2">🎉 Great analysis!</p>
+                                            <p class="text-gray-300 text-sm">You have ${5 - newCount} free analyses remaining during our beta. Create an account anytime for unlimited access.</p>
+                                        </div>`
+                                    }]);
+                                }, 2000);
+                            } else if (newCount === 3) {
+                                setTimeout(() => {
+                                    setOutput(prev => [...prev, {
+                                        type: 'agent',
+                                        text: `<div class="bg-gradient-to-r from-blue-900/20 to-indigo-900/20 border border-blue-500/30 rounded-lg p-4 mt-4">
+                                            <p class="text-blue-300 font-semibold mb-2">💡 Pro tip</p>
+                                            <p class="text-gray-300 text-sm">You have ${5 - newCount} free analyses left. Sign up to save your analysis history and unlock advanced features!</p>
+                                            <a href="/signup" class="inline-block mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
+                                                Create Free Account
+                                            </a>
+                                        </div>`
+                                    }]);
+                                }, 2000);
+                            } else if (newCount === 5) {
+                                setTimeout(() => {
+                                    setOutput(prev => [...prev, {
+                                        type: 'agent',
+                                        text: `<div class="bg-gradient-to-r from-orange-900/20 to-red-900/20 border border-orange-500/30 rounded-lg p-4 mt-4">
+                                            <p class="text-orange-300 font-semibold mb-2">🚀 That's your 5th free analysis!</p>
+                                            <p class="text-gray-300 text-sm">You've used all your free beta analyses. Create an account to continue with unlimited access!</p>
+                                            <a href="/signup" class="inline-block mt-3 px-4 py-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-lg text-sm font-medium transition-colors">
+                                                Sign Up to Continue
+                                            </a>
+                                        </div>`
+                                    }]);
+                                }, 2000);
+                            }
+                        }
                     }
                 }
             );
+            }
             
         } catch (error) {
             setOutput([...newOutput, { 
@@ -355,12 +579,38 @@ const Dashboard = () => {
 
     return (
         <div className="flex flex-col h-full bg-gray-950 text-gray-200 p-4 md:p-6">
+            {/* Guest usage indicator */}
+            {isGuest && (
+                <div className="mb-4 flex items-center justify-between bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-lg p-3">
+                    <div className="flex items-center space-x-3">
+                        <SparklesIcon className="w-5 h-5 text-green-400" />
+                        <span className="text-sm text-gray-300">
+                            Beta Access: <span className="font-semibold text-white">{5 - guestAnalysisCount}</span> free analyses remaining
+                        </span>
+                    </div>
+                    {guestAnalysisCount > 0 && (
+                        <a 
+                            href="/signup" 
+                            className="text-sm text-green-400 hover:text-green-300 transition-colors font-medium"
+                        >
+                            Sign up for unlimited
+                        </a>
+                    )}
+                </div>
+            )}
+            
             <div className="flex-grow overflow-y-auto pr-2 space-y-6">
                 {output.map((line, index) => (
                     <div key={index}>
                         {line.type === 'user' ? (
                             <div className="flex items-start justify-end">
-                                <p className="bg-green-600/80 text-white rounded-lg py-2 px-4 max-w-xl whitespace-pre-wrap">{line.text}</p>
+                                <div className="bg-green-600/80 text-white rounded-lg py-3 px-4 max-w-3xl">
+                                    {line.text.includes('\n') || line.text.length > 100 ? (
+                                        <pre className="whitespace-pre-wrap font-mono text-sm overflow-x-auto">{line.text}</pre>
+                                    ) : (
+                                        <p className="whitespace-pre-wrap">{line.text}</p>
+                                    )}
+                                </div>
                             </div>
                         ) : (
                             <div className="flex items-start">
@@ -426,6 +676,24 @@ const Dashboard = () => {
 
 const History = ({ history }: { history: AnalysisHistory[] }) => {
     const [selectedAnalysis, setSelectedAnalysis] = useState<AnalysisHistory | null>(null);
+    const [threads, setThreads] = useState<any[]>([]);
+    const [isLoadingThreads, setIsLoadingThreads] = useState(false);
+    
+    useEffect(() => {
+        fetchThreads();
+    }, []);
+    
+    const fetchThreads = async () => {
+        setIsLoadingThreads(true);
+        try {
+            const response = await analysisService.getThreads(1, 50);
+            setThreads(response.data.threads);
+        } catch (error) {
+            console.error('Error fetching threads:', error);
+        } finally {
+            setIsLoadingThreads(false);
+        }
+    };
     
     const getSeverityColor = (severity: string) => {
         switch (severity) {
@@ -439,8 +707,18 @@ const History = ({ history }: { history: AnalysisHistory[] }) => {
     
     return (
         <div className="p-6 bg-gray-950 text-gray-200 h-full overflow-y-auto">
-            <h1 className="text-2xl text-gray-100 font-bold mb-6">Analysis History</h1>
-            {history.length === 0 ? (
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-2xl text-gray-100 font-bold">Analysis History</h1>
+                {threads.length > 0 && (
+                    <span className="text-sm text-gray-400">{threads.length} analysis threads</span>
+                )}
+            </div>
+            
+            {isLoadingThreads ? (
+                <div className="flex items-center justify-center py-12">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-400"></div>
+                </div>
+            ) : threads.length === 0 && history.length === 0 ? (
                 <div className="text-center py-12">
                     <p className="text-gray-400">No analysis history yet. Start by analyzing some logs!</p>
                 </div>
@@ -457,26 +735,44 @@ const History = ({ history }: { history: AnalysisHistory[] }) => {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-800">
-                            {history.map(session => (
-                                <tr key={session.id} className="hover:bg-gray-900 transition-colors">
-                                    <td className="p-3 text-sm text-gray-300 font-mono">{session.date}</td>
-                                    <td className="p-3 text-sm text-gray-300 max-w-xs truncate">{session.query}</td>
-                                    <td className="p-3 text-sm text-gray-300">{session.issues}</td>
-                                    <td className="p-3 text-sm">
-                                        <span className={`font-semibold ${getSeverityColor(session.severity)}`}>
-                                            {session.severity.toUpperCase()}
-                                        </span>
-                                    </td>
-                                    <td className="p-3 text-sm">
-                                        <button 
-                                            onClick={() => setSelectedAnalysis(session)}
-                                            className="text-blue-400 hover:underline"
-                                        >
-                                            View
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
+                            {(threads.length > 0 ? threads : history).map((item: any) => {
+                                const isThread = 'thread_id' in item;
+                                return (
+                                    <tr key={isThread ? item.thread_id : item.id} className="hover:bg-gray-900 transition-colors">
+                                        <td className="p-3 text-sm text-gray-300 font-mono">
+                                            {isThread 
+                                                ? new Date(item.timestamp * 1000).toISOString().split('T')[0]
+                                                : item.date}
+                                        </td>
+                                        <td className="p-3 text-sm text-gray-300 max-w-xs truncate">
+                                            {isThread ? item.log_preview : item.query}
+                                        </td>
+                                        <td className="p-3 text-sm text-gray-300">
+                                            {isThread ? item.issue_count : item.issues}
+                                        </td>
+                                        <td className="p-3 text-sm">
+                                            <span className={`font-semibold ${getSeverityColor(item.severity)}`}>
+                                                {item.severity.toUpperCase()}
+                                            </span>
+                                        </td>
+                                        <td className="p-3 text-sm">
+                                            <button 
+                                                onClick={() => setSelectedAnalysis(isThread ? {
+                                                    id: item.thread_id,
+                                                    query: item.log_preview,
+                                                    date: new Date(item.timestamp * 1000).toISOString().split('T')[0],
+                                                    issues: item.issue_count,
+                                                    severity: item.severity,
+                                                    analysis: item
+                                                } : item)}
+                                                className="text-blue-400 hover:underline"
+                                            >
+                                                View
+                                            </button>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
                         </tbody>
                     </table>
                 </div>
@@ -601,6 +897,95 @@ const Applications = () => {
     );
 };
 
+const GuestUpgradePrompt = ({ feature }: { feature: string }) => {
+    return (
+        <div className="flex items-center justify-center h-full p-6">
+            <div className="max-w-md text-center">
+                <div className="inline-flex p-4 rounded-full bg-gradient-to-br from-green-500/20 to-emerald-500/20 mb-6">
+                    <SparklesIcon className="w-12 h-12 text-green-400" />
+                </div>
+                <h2 className="text-2xl font-bold text-white mb-4">Unlock {feature}</h2>
+                <p className="text-gray-400 mb-6">
+                    Create a free account to access {feature.toLowerCase()} and all other premium features.
+                </p>
+                <a 
+                    href="/signup" 
+                    className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-medium rounded-lg hover:from-green-600 hover:to-emerald-600 transition-all transform hover:scale-105"
+                >
+                    Sign Up Free
+                    <ArrowRightIcon className="w-5 h-5 ml-2" />
+                </a>
+                <p className="mt-4 text-sm text-gray-500">No credit card required</p>
+            </div>
+        </div>
+    );
+};
+
+const UpgradeModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
+    if (!isOpen) return null;
+    
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+            <div className="bg-gray-900 rounded-2xl max-w-md w-full p-8 relative">
+                <button 
+                    onClick={onClose}
+                    className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors"
+                >
+                    ✕
+                </button>
+                
+                <div className="text-center">
+                    <div className="inline-flex p-4 rounded-full bg-gradient-to-br from-green-500/20 to-emerald-500/20 mb-6">
+                        <SparklesIcon className="w-12 h-12 text-green-400" />
+                    </div>
+                    
+                    <h2 className="text-3xl font-bold text-white mb-4">You've Used Your 5 Free Beta Analyses!</h2>
+                    <p className="text-gray-400 mb-8">
+                        Sign up for a free account to continue with unlimited log analyses during our beta period.
+                    </p>
+                    
+                    <div className="bg-gray-800/50 rounded-xl p-6 mb-8">
+                        <h3 className="text-lg font-semibold text-white mb-4">What you'll get:</h3>
+                        <ul className="space-y-3 text-left">
+                            <li className="flex items-start">
+                                <CheckIcon className="w-5 h-5 text-green-400 mr-3 flex-shrink-0 mt-0.5" />
+                                <span className="text-gray-300">Unlimited log analyses</span>
+                            </li>
+                            <li className="flex items-start">
+                                <CheckIcon className="w-5 h-5 text-green-400 mr-3 flex-shrink-0 mt-0.5" />
+                                <span className="text-gray-300">Save and search analysis history</span>
+                            </li>
+                            <li className="flex items-start">
+                                <CheckIcon className="w-5 h-5 text-green-400 mr-3 flex-shrink-0 mt-0.5" />
+                                <span className="text-gray-300">Configure multiple applications</span>
+                            </li>
+                            <li className="flex items-start">
+                                <CheckIcon className="w-5 h-5 text-green-400 mr-3 flex-shrink-0 mt-0.5" />
+                                <span className="text-gray-300">Advanced AI-powered insights</span>
+                            </li>
+                        </ul>
+                    </div>
+                    
+                    <div className="space-y-3">
+                        <a 
+                            href="/signup" 
+                            className="block w-full py-3 px-6 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-medium rounded-lg hover:from-green-600 hover:to-emerald-600 transition-all transform hover:scale-[1.02]"
+                        >
+                            Create Free Account
+                        </a>
+                        <button 
+                            onClick={onClose}
+                            className="block w-full py-3 px-6 bg-gray-800 text-gray-300 font-medium rounded-lg hover:bg-gray-700 hover:text-white transition-all"
+                        >
+                            Maybe Later
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const Settings = () => {
     const [settings, setSettings] = useState({
         analysisDepth: 'comprehensive',
@@ -692,9 +1077,19 @@ const Settings = () => {
 
 // --- Main App Component ---
 
-export default function AllogatorUI() {
+interface AllogatorUIProps {
+    isGuest?: boolean;
+}
+
+export default function AllogatorUI({ isGuest = false }: AllogatorUIProps) {
     const [activeView, setActiveView] = useState('Dashboard');
     const [history, setHistory] = useState<AnalysisHistory[]>([]);
+    const [guestAnalysisCount, setGuestAnalysisCount] = useState(() => {
+        const count = localStorage.getItem('allogator_guest_analysis_count');
+        return count ? parseInt(count) : 0;
+    });
+    const [showUpgradePrompt, setShowUpgradePrompt] = useState(false);
+    const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
     // Add Google Font for a cleaner look
     useEffect(() => {
@@ -704,18 +1099,65 @@ export default function AllogatorUI() {
         document.head.appendChild(link);
     }, []);
 
+    // Fetch analysis history for authenticated users
+    useEffect(() => {
+        if (!isGuest) {
+            fetchAnalysisHistory();
+        }
+    }, [isGuest]);
+
+    const fetchAnalysisHistory = async () => {
+        setIsLoadingHistory(true);
+        try {
+            const response = await analysisService.getHistory(1, 50);
+            const historyData = response.data.analyses.map((analysis: any) => ({
+                id: analysis.analysis_id || Date.now().toString(),
+                query: analysis.log_source || 'Log Analysis',
+                date: new Date(analysis.timestamp).toISOString().split('T')[0],
+                issues: analysis.issue_count || 0,
+                severity: analysis.severity || 'low',
+                analysis: analysis
+            }));
+            setHistory(historyData);
+        } catch (error) {
+            console.error('Error fetching history:', error);
+        } finally {
+            setIsLoadingHistory(false);
+        }
+    };
+
     const renderView = () => {
         switch (activeView) {
             case 'Dashboard':
-                return <Dashboard />;
+                return (
+                    <Dashboard 
+                        isGuest={isGuest}
+                        guestAnalysisCount={guestAnalysisCount}
+                        setGuestAnalysisCount={setGuestAnalysisCount}
+                        onUpgradePrompt={() => setShowUpgradePrompt(true)}
+                        history={history}
+                        setHistory={setHistory}
+                        fetchAnalysisHistory={fetchAnalysisHistory}
+                    />
+                );
             case 'History':
-                return <History history={history} />;
+                return isGuest ? <GuestUpgradePrompt feature="History" /> : <History history={history} />;
             case 'Applications':
-                return <Applications />;
+                return isGuest ? <GuestUpgradePrompt feature="Applications" /> : <Applications />;
             case 'Settings':
-                return <Settings />;
+                return isGuest ? <GuestUpgradePrompt feature="Settings" /> : <Settings />;
             default:
-                return <Dashboard />;
+                return (
+                    <Dashboard 
+                        isGuest={isGuest}
+                        guestAnalysisCount={guestAnalysisCount}
+                        setGuestAnalysisCount={setGuestAnalysisCount}
+                        onUpgradePrompt={() => setShowUpgradePrompt(true)}
+                        history={history}
+                        setHistory={setHistory}
+                        fetchAnalysisHistory={fetchAnalysisHistory}
+                    />
+                );
         }
     };
 
@@ -726,10 +1168,11 @@ export default function AllogatorUI() {
                 .font-sans { font-family: 'Inter', sans-serif; }
                 .font-mono { font-family: 'Roboto Mono', monospace; }
             `}</style>
-            <Sidebar activeView={activeView} setActiveView={setActiveView} />
+            <Sidebar activeView={activeView} setActiveView={setActiveView} isGuest={isGuest} />
             <main className="flex-1 h-full overflow-hidden">
                 {renderView()}
             </main>
+            <UpgradeModal isOpen={showUpgradePrompt} onClose={() => setShowUpgradePrompt(false)} />
         </div>
     );
 }

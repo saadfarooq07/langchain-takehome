@@ -1,42 +1,26 @@
-# Multi-stage build for efficient image
-FROM oven/bun:1 as frontend-builder
+FROM langchain/langgraph-api:3.11
 
-WORKDIR /frontend
-COPY frontend/package.json frontend/bun.lockb ./
-RUN bun install --frozen-lockfile
 
-COPY frontend/ ./
-RUN bun run build
 
-# Backend stage
-FROM python:3.11-slim
+# -- Adding local package . --
+ADD . /deps/langchain-takehome
+# -- End of local package . --
 
-WORKDIR /app
+# -- Installing all local dependencies --
+RUN PYTHONDONTWRITEBYTECODE=1 uv pip install --system --no-cache-dir -c /api/constraints.txt -e /deps/*
+# -- End of local dependencies install --
+ENV LANGSERVE_GRAPHS='{"log_analyzer": "log_analyzer_agent.graph:graph"}'
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
-COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# -- Ensure user deps didn't inadvertently overwrite langgraph-api
+RUN mkdir -p /api/langgraph_api /api/langgraph_runtime /api/langgraph_license && touch /api/langgraph_api/__init__.py /api/langgraph_runtime/__init__.py /api/langgraph_license/__init__.py
+RUN PYTHONDONTWRITEBYTECODE=1 uv pip install --system --no-cache-dir --no-deps -e /api
+# -- End of ensuring user deps didn't inadvertently overwrite langgraph-api --
+# -- Removing build deps from the final image ~<:===~~~ --
+RUN pip uninstall -y pip setuptools wheel
+RUN rm -rf /usr/local/lib/python*/site-packages/pip* /usr/local/lib/python*/site-packages/setuptools* /usr/local/lib/python*/site-packages/wheel* && find /usr/local/bin -name "pip*" -delete || true
+RUN rm -rf /usr/lib/python*/site-packages/pip* /usr/lib/python*/site-packages/setuptools* /usr/lib/python*/site-packages/wheel* && find /usr/bin -name "pip*" -delete || true
+RUN uv pip uninstall --system pip setuptools wheel && rm /usr/bin/uv /usr/bin/uvx
 
-# Copy the application code
-COPY . .
-
-# Copy built frontend from previous stage
-COPY --from=frontend-builder /frontend/build ./frontend/build
-
-# Install the package in development mode
-RUN pip install -e .
-
-# Expose port
-EXPOSE 8000
-
-# Simple startup - no complex CLI
-CMD ["python", "main.py"]
+WORKDIR /deps/langchain-takehome

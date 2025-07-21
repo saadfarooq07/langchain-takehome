@@ -3,6 +3,8 @@
   "version": "2.0.0",
   "private": true,
   "dependencies": {
+    "@babel/code-frame": "^7.27.1",
+    "@react-oauth/google": "^0.12.2",
     "@types/jest": "^29.5.11",
     "@types/node": "^20.10.4",
     "@types/react": "^18.2.45",
@@ -19,11 +21,16 @@
   "scripts": {
     "start": "bun run bun.dev.simple.ts",
     "build": "bun run bun.build.ts",
+    "build:cloudflare": "bun run bun.build.cloudflare.ts",
     "dev": "bun run bun.dev.ts",
     "test": "bun test",
     "lint": "eslint src --ext .ts,.tsx",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "deploy:staging": "bun run build:cloudflare && wrangler deploy --env staging",
+    "deploy:production": "bun run build:cloudflare && wrangler deploy --env production",
+    "preview": "wrangler dev --local",
+    "secrets:manage": "./scripts/manage-secrets.sh"
   },
   "eslintConfig": {
     "extends": [
@@ -44,6 +51,8 @@
     ]
   },
   "devDependencies": {
+    "@cloudflare/kv-asset-handler": "^0.4.0",
+    "@cloudflare/workers-types": "^4.20250719.0",
     "@types/dompurify": "^3.0.5",
     "@typescript-eslint/eslint-plugin": "^6.14.0",
     "@typescript-eslint/parser": "^6.14.0",
@@ -55,8 +64,10 @@
     "eslint-plugin-react-hooks": "^4.6.0",
     "postcss": "^8.4.32",
     "prettier": "^3.1.1",
+    "sst": "^3.17.10",
     "tailwindcss": "^3.4.0",
-    "vite": "^5.0.10"
+    "vite": "^5.0.10",
+    "wrangler": "^4.25.0"
   },
   "proxy": "http://localhost:8000"
 }

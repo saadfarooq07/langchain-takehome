@@ -1,0 +1,12 @@
+
+# Environment files
+.env.staging
+.env.production
+.env.local
+
+# Cloudflare
+.wrangler/
+
+# SST
+.sst/
+

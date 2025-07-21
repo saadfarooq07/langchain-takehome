@@ -1,5 +1,9 @@
 # Log Analyzer Agent
 
+![Docker Build](https://github.com/YOUR_USERNAME/langchain-takehome/actions/workflows/langgraph-docker-build.yml/badge.svg)
+![Deploy Verification](https://github.com/YOUR_USERNAME/langchain-takehome/actions/workflows/langgraph-deploy.yml/badge.svg)
+![Tests](https://github.com/YOUR_USERNAME/langchain-takehome/actions/workflows/test-suite.yml/badge.svg)
+
 A LangGraph-based agent that helps analyze logs, identify issues, suggest solutions, and reference relevant documentation.
 
 ## Features
@@ -23,6 +27,7 @@ A LangGraph-based agent that helps analyze logs, identify issues, suggest soluti
   - 5x faster than single-pass analysis
 - **Interactive Mode**: Requests clarification when needed
 - **Documentation Search**: Integrates with Tavily for up-to-date solutions
+- **OAuth Authentication**: Sign in with Google for seamless access
 
 ## Prerequisites
 
@@ -210,6 +215,38 @@ async def my_new_tool(
 
 Modify the prompt templates in `src/log_analyzer_agent/prompts.py` to adjust agent behavior.
 
+## CI/CD
+
+This project uses GitHub Actions for continuous integration and deployment verification:
+
+- **Docker Build**: Automatically builds and tests Docker images on every push
+- **Deploy Verification**: Validates LangGraph configuration and deployment readiness
+- **Test Suite**: Runs unit and integration tests across Python 3.9, 3.10, and 3.11
+
+### Setting up GitHub Actions
+
+1. Add the following secrets to your repository (Settings → Secrets → Actions):
+   - `GEMINI_API_KEY`
+   - `GROQ_API_KEY`
+   - `TAVILY_API_KEY`
+   - `LANGCHAIN_API_KEY` (optional, for deployment)
+
+2. Push to trigger workflows:
+   ```bash
+   git add .github/workflows/
+   git commit -m "Add GitHub Actions workflows"
+   git push
+   ```
+
+3. Monitor workflow runs in the Actions tab of your repository
+
+### Manual Workflow Triggers
+
+- **Verify Secrets**: Run manually to check if all secrets are configured correctly
+  ```bash
+  gh workflow run verify-secrets.yml
+  ```
+
 ## Troubleshooting
 
 ### Common Issues
@@ -224,6 +261,11 @@ Modify the prompt templates in `src/log_analyzer_agent/prompts.py` to adjust age
 3. **API Key errors**
    - All three API keys are required: GEMINI_API_KEY, GROQ_API_KEY, TAVILY_API_KEY
    - Copy `.env.example` to `.env` and add your keys
+
+4. **GitHub Actions failures**
+   - Check the Actions tab for detailed logs
+   - Run the verify-secrets workflow to ensure all secrets are set
+   - Review `.github/workflows/README.md` for troubleshooting tips
 
 ## License
 

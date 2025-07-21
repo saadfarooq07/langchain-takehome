@@ -1,7 +1,7 @@
 """Configuration for the Log Analyzer Agent."""
 
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field, field_validator
@@ -30,7 +30,7 @@ class ModelConfig(BaseModel):
         description="Model provider (gemini, groq, openai, etc.)"
     )
     model_name: str = Field(
-        default="gemini-2.0-flash-exp",
+        default="gemini-1.5-flash",
         description="Model name/identifier"
     )
     temperature: float = Field(
@@ -62,14 +62,54 @@ class ModelConfig(BaseModel):
         return os.getenv(default_vars.get(self.provider))
 
 
+class PromptConfiguration(BaseModel):
+    """Configuration for prompt management."""
+    
+    use_langsmith: bool = Field(
+        default=True,
+        description="Whether to use LangSmith for prompt management"
+    )
+    
+    prompt_versions: Dict[str, str] = Field(
+        default_factory=lambda: {
+            "main": "latest",
+            "validation": "latest",
+            "followup": "latest",
+            "doc-search": "latest"
+        },
+        description="Prompt versions to use (name -> version)"
+    )
+    
+    cache_prompts: bool = Field(
+        default=True,
+        description="Whether to cache prompts locally"
+    )
+    
+    prompt_cache_ttl: int = Field(
+        default=3600,  # 1 hour
+        description="Prompt cache TTL in seconds"
+    )
+    
+    langsmith_api_key: Optional[str] = Field(
+        default_factory=lambda: os.getenv("LANGSMITH_API_KEY"),
+        description="LangSmith API key"
+    )
+
+
 class Configuration(BaseModel):
     """Configuration for the Log Analyzer Agent."""
+    
+    # Backward compatibility field
+    model: Optional[str] = Field(
+        default=None,
+        description="Model string in provider:model format (for backward compatibility)"
+    )
 
     # Model configurations
     primary_model: ModelConfig = Field(
         default_factory=lambda: ModelConfig(
             provider="gemini",
-            model_name="gemini-2.0-flash-exp",
+            model_name="gemini-1.5-flash",
             temperature=0.0,
             api_key_env_var="GEMINI_API_KEY"
         ),
@@ -147,9 +187,21 @@ class Configuration(BaseModel):
     )
 
     # Prompt configuration
-    prompt: ChatPromptTemplate = Field(
-        default_factory=lambda: ChatPromptTemplate.from_template(DEFAULT_PROMPT),
-        description="The prompt template to use for log analysis"
+    prompt_config: PromptConfiguration = Field(
+        default_factory=PromptConfiguration,
+        description="Configuration for prompt management"
+    )
+    
+    # Legacy prompt support (deprecated, use prompt_config instead)
+    prompt: Optional[ChatPromptTemplate] = Field(
+        default=None,
+        description="Legacy prompt template (deprecated - use LangSmith prompts)"
+    )
+    
+    # Prompt name to use from LangSmith
+    main_prompt_name: str = Field(
+        default="main",
+        description="Name of the main prompt in LangSmith"
     )
     
     # Tool configuration
@@ -185,21 +237,31 @@ class Configuration(BaseModel):
         config = config or {}
         configurable = config.get("configurable", {})
         
+        # Create a new configuration instance
+        instance = cls()
+        
         # Handle model string format (provider:model)
         if "model" in configurable:
-            provider, model_name = configurable["model"].split(":", 1)
-            configurable["primary_model"] = ModelConfig(
-                provider=provider,
-                model_name=model_name
-            )
+            # Store the model string as an attribute for backward compatibility
+            instance.model = configurable["model"]
+            
+            # Also parse it for the primary model
+            if ":" in configurable["model"]:
+                provider, model_name = configurable["model"].split(":", 1)
+                instance.primary_model = ModelConfig(
+                    provider=provider,
+                    model_name=model_name
+                )
+        else:
+            # Set default model string
+            instance.model = instance.primary_model.get_model_string()
         
-        # Extract relevant fields
-        extracted = {}
+        # Update other fields
         for key in ["max_search_results", "max_analysis_iterations", "enable_cache"]:
             if key in configurable:
-                extracted[key] = configurable[key]
+                setattr(instance, key, configurable[key])
         
-        return cls(**extracted)
+        return instance
     
     @classmethod
     def from_environment(cls) -> "Configuration":
@@ -207,7 +269,7 @@ class Configuration(BaseModel):
         return cls(
             primary_model=ModelConfig(
                 provider=os.getenv("PRIMARY_MODEL_PROVIDER", "gemini"),
-                model_name=os.getenv("PRIMARY_MODEL_NAME", "gemini-2.0-flash-exp"),
+                model_name=os.getenv("PRIMARY_MODEL_NAME", "gemini-1.5-flash"),
                 temperature=float(os.getenv("PRIMARY_MODEL_TEMPERATURE", "0.0")),
             ),
             orchestration_model=ModelConfig(
@@ -221,6 +283,34 @@ class Configuration(BaseModel):
             enable_interactive=os.getenv("ENABLE_INTERACTIVE", "true").lower() == "true",
             enable_memory=os.getenv("ENABLE_MEMORY", "false").lower() == "true",
         )
+    
+    def get_prompt_name_for_node(self, node_name: str) -> str:
+        """Get the prompt name for a specific node.
+        
+        Args:
+            node_name: Name of the node (e.g., 'analyze_logs', 'validate_analysis')
+            
+        Returns:
+            The prompt name to use from LangSmith
+        """
+        prompt_mapping = {
+            "analyze_logs": "main",
+            "validate_analysis": "validation",
+            "handle_user_input": "followup",
+            "search_documentation": "doc-search",
+        }
+        return prompt_mapping.get(node_name, self.main_prompt_name)
+    
+    def get_prompt_version(self, prompt_type: str) -> str:
+        """Get the version for a specific prompt type.
+        
+        Args:
+            prompt_type: Type of prompt (e.g., 'main', 'validation')
+            
+        Returns:
+            The version to use (e.g., 'latest', 'v1.0.0')
+        """
+        return self.prompt_config.prompt_versions.get(prompt_type, "latest")
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary for logging/debugging."""
@@ -236,6 +326,11 @@ class Configuration(BaseModel):
                 "cache": self.enable_cache,
                 "interactive": self.enable_interactive,
                 "memory": self.enable_memory,
+            },
+            "prompt_config": {
+                "use_langsmith": self.prompt_config.use_langsmith,
+                "versions": self.prompt_config.prompt_versions,
+                "cache_enabled": self.prompt_config.cache_prompts,
             }
         }
 

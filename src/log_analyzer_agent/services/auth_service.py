@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 import jwt
 import asyncpg
+from ..db_pool import get_db_pool
 
 
 class AuthService:
@@ -14,20 +15,20 @@ class AuthService:
 
     def __init__(self, db_url: str):
         self.db_url = db_url
-        self.secret_key = os.getenv(
-            "BETTER_AUTH_SECRET", "your-secret-key-min-32-chars"
-        )
+        self.secret_key = os.getenv("BETTER_AUTH_SECRET")
+        if not self.secret_key:
+            raise ValueError("BETTER_AUTH_SECRET environment variable is required. Please set it to a secure random string (min 32 chars).")
         self.algorithm = "HS256"
         self.access_token_expire_minutes = 30
 
-    async def _get_db_connection(self):
-        """Get database connection."""
-        return await asyncpg.connect(self.db_url)
+    async def _get_db_pool(self):
+        """Get database pool instance."""
+        return await get_db_pool(self.db_url)
 
     async def setup_tables(self):
         """Create necessary tables for authentication."""
-        conn = await self._get_db_connection()
-        try:
+        pool = await self._get_db_pool()
+        async with pool.acquire() as conn:
             await conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS users (
@@ -62,9 +63,6 @@ class AuthService:
                 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
             """
             )
-
-        finally:
-            await conn.close()
 
     def _hash_password(self, password: str) -> str:
         """Hash a password."""
@@ -103,54 +101,53 @@ class AuthService:
         Returns:
             Tuple of (success, message, user_data)
         """
-        conn = await self._get_db_connection()
         try:
-            # Check if user already exists
-            existing_user = await conn.fetchrow(
-                "SELECT id FROM users WHERE email = $1", email
-            )
+            pool = await self._get_db_pool()
+            async with pool.acquire() as conn:
+                # Check if user already exists
+                existing_user = await conn.fetchrow(
+                    "SELECT id FROM users WHERE email = $1", email
+                )
 
-            if existing_user:
-                return False, "User already exists", None
+                if existing_user:
+                    return False, "User already exists", None
 
-            # Hash password
-            hashed_password = self._hash_password(password)
+                # Hash password
+                hashed_password = self._hash_password(password)
 
-            # Create user
-            user_id = await conn.fetchval(
-                """
-                INSERT INTO users (email, hashed_password, full_name)
-                VALUES ($1, $2, $3)
-                RETURNING id
-            """,
-                email,
-                hashed_password,
-                full_name,
-            )
+                # Create user
+                user_id = await conn.fetchval(
+                    """
+                    INSERT INTO users (email, hashed_password, full_name)
+                    VALUES ($1, $2, $3)
+                    RETURNING id
+                """,
+                    email,
+                    hashed_password,
+                    full_name,
+                )
 
-            # Get created user
-            user = await conn.fetchrow(
-                """
-                SELECT id, email, full_name, is_active, created_at
-                FROM users WHERE id = $1
-            """,
-                user_id,
-            )
+                # Get created user
+                user = await conn.fetchrow(
+                    """
+                    SELECT id, email, full_name, is_active, created_at
+                    FROM users WHERE id = $1
+                """,
+                    user_id,
+                )
 
-            user_data = {
-                "id": str(user["id"]),
-                "email": user["email"],
-                "full_name": user["full_name"],
-                "is_active": user["is_active"],
-                "created_at": user["created_at"].isoformat(),
-            }
+                user_data = {
+                    "id": str(user["id"]),
+                    "email": user["email"],
+                    "full_name": user["full_name"],
+                    "is_active": user["is_active"],
+                    "created_at": user["created_at"].isoformat(),
+                }
 
-            return True, "User created successfully", user_data
+                return True, "User created successfully", user_data
 
         except Exception as e:
             return False, f"Error creating user: {str(e)}", None
-        finally:
-            await conn.close()
 
     async def authenticate_user(
         self, email: str, password: str
@@ -215,8 +212,6 @@ class AuthService:
 
         except Exception as e:
             return False, f"Error authenticating user: {str(e)}", None
-        finally:
-            await conn.close()
 
     async def verify_session(self, token: str) -> Optional[Dict[str, Any]]:
         """Verify user session.
@@ -227,15 +222,16 @@ class AuthService:
         Returns:
             User data if valid, None otherwise
         """
-        # Verify token
-        payload = self._verify_token(token)
-        if not payload:
-            return None
-
-        conn = await self._get_db_connection()
         try:
-            # Check if session exists and is active
-            session = await conn.fetchrow(
+            # Verify token
+            payload = self._verify_token(token)
+            if not payload:
+                return None
+
+            pool = await self._get_db_pool()
+            async with pool.acquire() as conn:
+                # Check if session exists and is active
+                session = await conn.fetchrow(
                 """
                 SELECT s.id, s.user_id, s.expires_at, u.email, u.full_name, u.is_active
                 FROM user_sessions s
@@ -245,23 +241,21 @@ class AuthService:
                 token,
             )
 
-            if not session:
-                return None
+                if not session:
+                    return None
 
-            if not session["is_active"]:
-                return None
+                if not session["is_active"]:
+                    return None
 
-            return {
-                "id": str(session["user_id"]),
-                "email": session["email"],
-                "full_name": session["full_name"],
-            }
+                return {
+                    "id": str(session["user_id"]),
+                    "email": session["email"],
+                    "full_name": session["full_name"],
+                }
 
         except Exception as e:
             print(f"Error verifying session: {e}")
             return None
-        finally:
-            await conn.close()
 
     async def logout_user(self, token: str) -> bool:
         """Logout user by invalidating session.
@@ -272,24 +266,23 @@ class AuthService:
         Returns:
             True if successful, False otherwise
         """
-        conn = await self._get_db_connection()
         try:
-            result = await conn.execute(
-                """
-                UPDATE user_sessions 
-                SET is_active = FALSE 
-                WHERE token = $1
-            """,
-                token,
-            )
+            pool = await self._get_db_pool()
+            async with pool.acquire() as conn:
+                result = await conn.execute(
+                    """
+                    UPDATE user_sessions 
+                    SET is_active = FALSE 
+                    WHERE token = $1
+                """,
+                    token,
+                )
 
-            return result == "UPDATE 1"
+                return result == "UPDATE 1"
 
         except Exception as e:
             print(f"Error logging out user: {e}")
             return False
-        finally:
-            await conn.close()
 
     async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get user by ID.
@@ -300,9 +293,10 @@ class AuthService:
         Returns:
             User data if found, None otherwise
         """
-        conn = await self._get_db_connection()
         try:
-            user = await conn.fetchrow(
+            pool = await self._get_db_pool()
+            async with pool.acquire() as conn:
+                user = await conn.fetchrow(
                 """
                 SELECT id, email, full_name, is_active, created_at
                 FROM users WHERE id = $1
@@ -310,34 +304,31 @@ class AuthService:
                 uuid.UUID(user_id),
             )
 
-            if not user:
-                return None
+                if not user:
+                    return None
 
-            return {
-                "id": str(user["id"]),
-                "email": user["email"],
-                "full_name": user["full_name"],
-                "is_active": user["is_active"],
-                "created_at": user["created_at"].isoformat(),
-            }
+                return {
+                    "id": str(user["id"]),
+                    "email": user["email"],
+                    "full_name": user["full_name"],
+                    "is_active": user["is_active"],
+                    "created_at": user["created_at"].isoformat(),
+                }
 
         except Exception as e:
             print(f"Error getting user by ID: {e}")
             return None
-        finally:
-            await conn.close()
 
     async def cleanup_expired_sessions(self):
         """Clean up expired sessions."""
-        conn = await self._get_db_connection()
         try:
-            await conn.execute(
+            pool = await self._get_db_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    DELETE FROM user_sessions 
+                    WHERE expires_at < NOW() OR is_active = FALSE
                 """
-                DELETE FROM user_sessions 
-                WHERE expires_at < NOW() OR is_active = FALSE
-            """
-            )
+                )
         except Exception as e:
             print(f"Error cleaning up expired sessions: {e}")
-        finally:
-            await conn.close()

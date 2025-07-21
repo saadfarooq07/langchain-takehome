@@ -53,27 +53,43 @@ class LogAnalysisRequest(BaseModel):
     environment_details: Optional[Dict[str, Any]] = Field(
         None, description="Additional environment details"
     )
+    environment_context: Optional[str] = Field(
+        None, description="Environment context description"
+    )
     enable_memory: bool = Field(True, description="Enable memory-based analysis")
+    enable_enhanced_analysis: bool = Field(False, description="Enable enhanced analysis with better output quality")
 
 
 class AnalysisIssue(BaseModel):
     """Analysis issue model."""
 
-    type: str
-    description: str
-    severity: str
+    type: str = "general"
+    description: str = ""
+    severity: str = "medium"
+    message: Optional[str] = None  # Alternative to description
     line_number: Optional[int] = None
     timestamp: Optional[str] = None
+    category: Optional[str] = None
+    suggested_solution: Optional[str] = None
+    documentation_link: Optional[str] = None
+    root_cause: Optional[str] = None
+    impact: Optional[str] = None
 
 
 class AnalysisResult(BaseModel):
     """Analysis result model."""
 
     issues: List[AnalysisIssue]
-    suggestions: List[str]
-    explanations: List[str]
-    documentation_references: List[Dict[str, str]]
-    diagnostic_commands: List[Dict[str, str]]
+    summary: str = ""
+    recommendations: List[str] = []
+    analyzed_lines: int = 0
+    processing_time: float = 0.0
+    confidence_score: float = 0.95
+    # Additional fields for compatibility
+    suggestions: List[str] = []
+    explanations: List[str] = []
+    documentation_references: List[Dict[str, str]] = []
+    diagnostic_commands: List[Dict[str, str]] = []
     performance_metrics: Optional[Dict[str, Any]] = None
 
 
@@ -81,12 +97,17 @@ class LogAnalysisResponse(BaseModel):
     """Log analysis response model."""
 
     analysis_id: str
-    thread_id: str
-    session_id: str
-    analysis_result: AnalysisResult
+    status: str = "completed"
+    result: Optional[AnalysisResult] = None
+    created_at: Optional[Any] = None  # datetime
+    completed_at: Optional[Any] = None  # datetime
+    # Legacy fields for compatibility
+    thread_id: Optional[str] = None
+    session_id: Optional[str] = None
+    analysis_result: Optional[AnalysisResult] = None
     similar_issues_found: int = 0
     memory_enabled: bool = True
-    processing_time: float
+    processing_time: float = 0.0
 
 
 class UserPreferences(BaseModel):
@@ -122,6 +143,17 @@ class MemorySearchResponse(BaseModel):
     results: List[Dict[str, Any]]
     total_found: int
     search_time: float
+
+
+class AnalysisHistoryItem(BaseModel):
+    """Individual analysis history item."""
+    
+    analysis_id: str
+    timestamp: Any  # datetime
+    log_source: str
+    issue_count: int
+    status: str
+    summary: str
 
 
 class AnalysisHistoryResponse(BaseModel):

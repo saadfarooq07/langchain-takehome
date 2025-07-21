@@ -13,7 +13,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 
-from .configuration import Configuration
+from .configuration import Configuration, ModelConfig
 
 
 def _init_model_sync(config: Optional[RunnableConfig] = None) -> BaseChatModel:
@@ -79,6 +79,42 @@ async def init_model_async(config: Optional[RunnableConfig] = None) -> BaseChatM
     """
     # Run the blocking initialization in a thread
     return await asyncio.to_thread(_init_model_sync, config)
+
+
+async def init_model_from_config(model_config: ModelConfig) -> BaseChatModel:
+    """Initialize a model from a ModelConfig object.
+    
+    Args:
+        model_config: ModelConfig with provider, model_name, etc.
+        
+    Returns:
+        An initialized chat model
+    """
+    if model_config.provider == "gemini":
+        api_key = model_config.get_api_key() or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "GEMINI_API_KEY environment variable is required for Gemini models"
+            )
+        return ChatGoogleGenerativeAI(
+            model=model_config.model_name,
+            google_api_key=api_key,
+            temperature=model_config.temperature
+        )
+    elif model_config.provider == "groq":
+        api_key = model_config.get_api_key() or os.environ.get("GROQ_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "GROQ_API_KEY environment variable is required for Groq models"
+            )
+        return ChatGroq(
+            model=model_config.model_name,
+            groq_api_key=api_key,
+            temperature=model_config.temperature,
+            max_tokens=None  # Use model default
+        )
+    else:
+        raise ValueError(f"Unknown model provider: {model_config.provider}")
 
 
 def init_model(config: Optional[RunnableConfig] = None) -> BaseChatModel:

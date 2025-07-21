@@ -26,6 +26,9 @@ dependencies = [
     "python-multipart>=0.0.6",
     "pyjwt>=2.8.0",
     "email-validator>=2.0.0",
+    "alembic>=1.13.0",
+    "sqlalchemy>=2.0.0",
+    "sse-starlette>=2.1.0",
 ]
 
 [project.optional-dependencies]
@@ -38,8 +41,8 @@ dev = [
 ]
 
 [project.scripts]
-log-analyzer = "main:main"
-log-analyzer-api = "main:run_api_server"
+start = "main:run_server"
+dev = "main:run_dev_server"
 
 [build-system]
 requires = ["hatchling"]

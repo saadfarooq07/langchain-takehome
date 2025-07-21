@@ -11,11 +11,13 @@ from langgraph.store.base import BaseStore
 from ..configuration import Configuration
 from ..state import CoreState, InteractiveState, MemoryState
 from ..tools import request_additional_info, search_documentation, submit_analysis
+from ..prompt_registry import get_prompt_registry
 # Import functions directly from utils.py to avoid circular imports
 from ..utils import format_environment_context, preprocess_log
 
 # Import init_model_async directly from utils.py
 from ..utils import init_model_async
+from ..model_pool import pooled_model
 from ..cache_utils.cache import get_cache
 from ..validation import LogValidator
 from ..services.memory_service import MemoryService
@@ -188,26 +190,51 @@ User Preferences:
     if getattr(state, "environment_details", None):
         environment_context = format_environment_context(state.environment_details)
 
-    # Prepare the prompt
-    prompt = configuration.prompt.format(
-        log_content=processed_log,
-        environment_context=environment_context + memory_context,
-    )
+    # Get prompt from registry or use legacy prompt
+    if configuration.prompt_config.use_langsmith and configuration.prompt is None:
+        # Use LangSmith prompt
+        registry = get_prompt_registry()
+        prompt_name = configuration.get_prompt_name_for_node("analyze_logs")
+        prompt_version = configuration.get_prompt_version("main")
+        
+        try:
+            prompt_template = await registry.get_prompt(prompt_name, version=prompt_version)
+            prompt_content = prompt_template.format(
+                log_content=processed_log,
+                environment_context=environment_context + memory_context,
+            )
+        except Exception as e:
+            # Fallback to default prompt if LangSmith fails
+            from ..prompts import main_prompt_template
+            prompt_content = main_prompt_template.format(
+                log_content=processed_log,
+                environment_context=environment_context + memory_context,
+            )
+    else:
+        # Use legacy prompt
+        prompt_template = configuration.prompt or configuration.prompt_config.fallback_template
+        prompt_content = prompt_template.format(
+            log_content=processed_log,
+            environment_context=environment_context + memory_context,
+        )
 
     # Create messages list
-    messages = [HumanMessage(content=prompt)] + getattr(state, "messages", None)
+    existing_messages = getattr(state, "messages", [])
+    # Filter out any messages with empty content
+    filtered_messages = [msg for msg in existing_messages if msg.content.strip()]
+    # Append new message to the end (chronological order)
+    messages = list(filtered_messages) + [HumanMessage(content=prompt_content)]
 
-    # Initialize model with tools
-    raw_model = await init_model_async(config)
+    # Use pooled model with tools
+    async with pooled_model(configuration.primary_model) as raw_model:
+        # Determine which tools to bind based on state capabilities
+        tools = [search_documentation, submit_analysis]
+        if has_interactive_features(state):
+            tools.append(request_additional_info)
 
-    # Determine which tools to bind based on state capabilities
-    tools = [search_documentation, submit_analysis]
-    if has_interactive_features(state):
-        tools.append(request_additional_info)
+        model = raw_model.bind_tools(tools, tool_choice="any")
 
-    model = raw_model.bind_tools(tools, tool_choice="any")
-
-    response = cast(AIMessage, await model.ainvoke(messages))
+        response = cast(AIMessage, await model.ainvoke(messages))
 
     # Check if analysis is complete or more info needed
     analysis_result = None

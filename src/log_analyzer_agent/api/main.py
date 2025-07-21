@@ -7,16 +7,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from ..services.auth_service import AuthService
+from ..model_pool import get_model_pool, cleanup_model_pool
 from .routes import router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for FastAPI app."""
+    # Initialize model pool on startup
+    try:
+        model_pool = await get_model_pool()
+        print("Model pool initialized successfully")
+    except Exception as e:
+        print(f"Error initializing model pool: {e}")
+    
     # Setup database tables on startup
-    db_url = os.getenv(
-        "DATABASE_URL", "postgresql://loganalyzer:password@localhost:5432/loganalyzer"
-    )
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        raise ValueError("DATABASE_URL environment variable is required. Please set it in your .env file.")
     auth_service = AuthService(db_url)
 
     try:
@@ -28,6 +36,12 @@ async def lifespan(app: FastAPI):
     yield
 
     # Cleanup on shutdown
+    try:
+        await cleanup_model_pool()
+        print("Model pool cleaned up successfully")
+    except Exception as e:
+        print(f"Error cleaning up model pool: {e}")
+        
     try:
         await auth_service.cleanup_expired_sessions()
         print("Cleaned up expired sessions")

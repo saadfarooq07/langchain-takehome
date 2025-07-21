@@ -1,541 +1,256 @@
-"""Updated main entry point with support for lightweight state and improved implementation."""
+#!/usr/bin/env python3
+"""Main entry point for the Log Analyzer Agent with CLI support."""
 
-import asyncio
 import os
 import sys
-import time
-from typing import Dict, Any, Optional
+import argparse
+import asyncio
+from typing import Optional, Set
 from dotenv import load_dotenv
-
-# Import graph factory and state adapter
-from src.log_analyzer_agent.graph_factory import GraphFactory, create_improved_analyzer
-from src.log_analyzer_agent.state_compat import StateAdapter
-from src.log_analyzer_agent.validation import APIKeyValidator
+import logging
+from pathlib import Path
 
 # Load environment variables
 load_dotenv()
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-def validate_and_set_api_keys():
-    """Validate API keys and set them in environment."""
-    gemini_key = os.getenv("GEMINI_API_KEY", "")
-    groq_key = os.getenv("GROQ_API_KEY", "")
-    tavily_key = os.getenv("TAVILY_API_KEY", "")
+
+def validate_api_keys():
+    """Validate required API keys are present."""
+    required_keys = {
+        "GEMINI_API_KEY": "Google AI API key for Gemini model",
+        "GROQ_API_KEY": "Groq API key for Kimi K2 model",
+        "TAVILY_API_KEY": "Tavily API key for documentation search"
+    }
     
-    # Validate keys
-    errors = []
+    missing_keys = []
+    for key, description in required_keys.items():
+        if not os.getenv(key):
+            missing_keys.append(f"{key} - {description}")
     
-    is_valid, error = APIKeyValidator.validate_gemini_api_key(gemini_key)
-    if not is_valid:
-        errors.append(f"GEMINI_API_KEY: {error}")
-    
-    is_valid, error = APIKeyValidator.validate_groq_api_key(groq_key)
-    if not is_valid:
-        errors.append(f"GROQ_API_KEY: {error}")
-    
-    is_valid, error = APIKeyValidator.validate_tavily_api_key(tavily_key)
-    if not is_valid:
-        errors.append(f"TAVILY_API_KEY: {error}")
-    
-    if errors:
-        print("API Key Validation Errors:")
-        for error in errors:
-            print(f"  - {error}")
-        print("\nPlease check your .env file and ensure all API keys are correctly set.")
+    if missing_keys:
+        print("❌ Missing required API keys:")
+        for key in missing_keys:
+            print(f"   • {key}")
+        print("\n📝 Please add these to your .env file")
+        print("   Copy .env.example to .env and add your keys")
         sys.exit(1)
     
-    # Set validated keys
-    os.environ["GEMINI_API_KEY"] = gemini_key
-    os.environ["GROQ_API_KEY"] = groq_key
-    os.environ["TAVILY_API_KEY"] = tavily_key
+    logger.info("✅ All API keys validated")
 
 
-# Validate API keys on module load
-validate_and_set_api_keys()
-
-
-async def process_log_minimal(
-    log_content: str,
-    environment_details: Optional[Dict[str, Any]] = None
-):
-    """Process a log using the minimal graph."""
-    graph = GraphFactory.create_graph(mode="minimal")
+async def run_cli_mode(args):
+    """Run the log analyzer in CLI mode."""
+    # Enable improved mode if requested
+    if args.use_improved or args.mode == "improved":
+        os.environ["USE_IMPROVED_LOG_ANALYZER"] = "true"
+        logger.info("🚀 Using improved log analyzer implementation")
     
-    state = {
-        "log_content": log_content,
-        "environment_details": environment_details or {}
-    }
+    # Determine features to enable based on mode
+    features = set()
+    if args.mode == "interactive":
+        features.add("interactive")
+    elif args.mode == "memory":
+        features.add("memory")
+    elif args.mode == "improved":
+        features = {"streaming", "specialized", "caching"}
+    elif args.mode == "minimal":
+        features = set()  # No extra features
     
-    # Configuration
-    config = {
-        "configurable": {
-            "model": "gemini:gemini-1.5-flash",
-            "max_search_results": 3,
-        }
-    }
-    
-    # Process
-    result = None
-    async for event in graph.astream(
-        state,
-        config,
-        stream_mode="values"
-    ):
-        if "analysis_result" in event and event["analysis_result"]:
-            result = event["analysis_result"]
-    
-    return result
-
-
-def process_log_interactive(
-    log_content: str,
-    environment_details: Optional[Dict[str, Any]] = None
-):
-    """Process a log using the interactive graph."""
-    graph = GraphFactory.create_graph(mode="interactive")
-    
-    state = {
-        "log_content": log_content,
-        "environment_details": environment_details,
-        "user_input": None,
-        "pending_questions": None,
-        "user_interaction_required": False
-    }
-    
-    result = graph.invoke(state)
-    return result
-
-
-def process_log_with_memory(
-    log_content: str,
-    user_id: str = "demo_user",
-    application_name: str = "demo_app",
-    environment_details: Optional[Dict[str, Any]] = None
-):
-    """Process a log using the graph with memory."""
-    graph = GraphFactory.create_graph(mode="memory")
-    
-    state = {
-        "log_content": log_content,
-        "environment_details": environment_details,
-        "user_id": user_id,
-        "application_name": application_name,
-        "user_input": None,
-        "pending_questions": None,
-        "user_interaction_required": False,
-        "memory_matches": None,
-        "application_context": None
-    }
-    
-    result = graph.invoke(state)
-    return result
-
-
-def process_log(
-    log_content: str,
-    environment_details: Optional[Dict[str, Any]] = None
-):
-    """Process a log using the full-featured graph."""
-    graph = GraphFactory.create_graph(mode="full")
-    
-    state = {
-        "log_content": log_content,
-        "environment_details": environment_details
-    }
-    
-    result = graph.invoke(state)
-    return result
-
-
-async def process_log_interactive(
-    log_content: str,
-    environment_details: Optional[Dict[str, Any]] = None
-):
-    """Process a log file with interactive support.
-    
-    Args:
-        log_content: The content of the log file to analyze
-        environment_details: Optional environment context
+    # Read log content
+    if args.log_file:
+        log_path = Path(args.log_file)
+        if not log_path.exists():
+            print(f"❌ Log file not found: {args.log_file}")
+            sys.exit(1)
         
-    Returns:
-        Analysis results
-    """
-    # Create interactive graph
-    graph = GraphFactory.create_graph(mode="interactive")
-    
-    # Create state
-    input_state = {
-        "log_content": log_content,
-        "environment_details": environment_details or {}
-    }
-    
-    # Configuration
-    config = {
-        "configurable": {
-            "model": "gemini:gemini-1.5-flash",
-            "max_search_results": 3,
-        }
-    }
-    
-    # Process
-    result = None
-    needs_input = False
-    
-    async for event in graph.astream(
-        input_state,
-        config,
-        stream_mode="values"
-    ):
-        if "analysis_result" in event and event["analysis_result"]:
-            result = event["analysis_result"]
-        if "needs_user_input" in event:
-            needs_input = event["needs_user_input"]
-        if "pending_request" in event and event["pending_request"]:
-            print(f"\nAdditional information needed:")
-            print(f"Question: {event['pending_request']['question']}")
-            print(f"Reason: {event['pending_request']['reason']}")
-    
-    return result, needs_input
-
-
-async def process_log_with_memory(
-    log_content: str,
-    user_id: str = "demo_user",
-    application_name: str = "demo_app",
-    environment_details: Optional[Dict[str, Any]] = None
-):
-    """Process a log file with full memory support.
-    
-    Args:
-        log_content: The content of the log file to analyze
-        user_id: User identifier for memory context
-        application_name: Application name for memory context
-        environment_details: Optional environment context
-        
-    Returns:
-        Analysis results
-    """
-    # Create graph with memory
-    graph, store, checkpointer = await GraphFactory.create_graph_async(mode="memory")
-    
-    try:
-        # Create state with memory fields
-        state = {
-            "log_content": log_content,
-            "environment_details": environment_details or {},
-            "user_id": user_id,
-            "application_name": application_name,
-            "start_time": time.time()
-        }
-        
-        # Configuration
-        config = {
-            "configurable": {
-                "user_id": user_id,
-                "thread_id": state.get("thread_id", ""),
-                "model": "gemini:gemini-1.5-flash",
-                "max_search_results": 3,
-            }
-        }
-        
-        # Process
-        result = None
-        async for event in graph.astream(
-            state,
-            config,
-            stream_mode="values"
-        ):
-            if "analysis_result" in event and event["analysis_result"]:
-                result = event["analysis_result"]
-        
-        return result
-    
-    finally:
-        # Clean up connections
-        await store.close()
-        await checkpointer.close()
-
-
-def print_analysis_result(result, title):
-    """Print analysis result in a formatted way."""
-    if result:
-        print(f"\n{title}:")
-        print("=" * 50)
-        
-        # Issues
-        issues = result.get("issues", [])
-        if issues:
-            print("\nIdentified Issues:")
-            for i, issue in enumerate(issues, 1):
-                print(f"{i}. {issue.get('description', 'No description')}")
-                print(f"   Severity: {issue.get('severity', 'Unknown')}")
-        
-        # Suggestions
-        suggestions = result.get("suggestions", [])
-        if suggestions:
-            print("\nSuggestions:")
-            for i, suggestion in enumerate(suggestions, 1):
-                print(f"{i}. {suggestion}")
-        
-        # Documentation
-        docs = result.get("documentation_references", [])
-        if docs:
-            print("\nRelevant Documentation:")
-            for doc in docs[:3]:  # Limit to 3
-                print(f"- {doc.get('title', 'No title')}")
-                print(f"  {doc.get('url', 'No URL')}")
-        
-        # Commands
-        commands = result.get("diagnostic_commands", [])
-        if commands:
-            print("\nDiagnostic Commands:")
-            for cmd in commands[:5]:  # Limit to 5
-                print(f"$ {cmd.get('command', 'No command')}")
-                print(f"  # {cmd.get('description', 'No description')}")
+        logger.info(f"📄 Reading log file: {args.log_file}")
+        log_content = log_path.read_text()
     else:
-        print("No analysis result was produced.")
-
-
-async def process_log_improved(
-    log_content: str,
-    environment_details: Optional[Dict[str, Any]] = None,
-    features: Optional[set] = None
-):
-    """Process a log using the improved implementation.
-    
-    Args:
-        log_content: The content of the log file to analyze
-        environment_details: Optional environment context
-        features: Optional features to enable (e.g., {"streaming", "memory"})
+        # Interactive mode - prompt for log content
+        print("\n📝 Please paste your log content (press Ctrl+D or Ctrl+Z on Windows when done):")
+        print("   Or provide a log file with --log-file option")
+        print("   Example: python main.py --use-improved --log-file /path/to/log.txt\n")
         
-    Returns:
-        Analysis results
-    """
-    # Create improved graph
-    graph = create_improved_analyzer(features=features)
+        try:
+            log_content = sys.stdin.read()
+        except KeyboardInterrupt:
+            print("\n\n❌ Input cancelled")
+            sys.exit(0)
     
-    # Import State if available
-    try:
-        from src.log_analyzer_agent.state import State
+    if not log_content.strip():
+        print("❌ No log content provided")
+        sys.exit(1)
+    
+    # Check if we should use improved implementation
+    if os.getenv("USE_IMPROVED_LOG_ANALYZER", "").lower() == "true":
+        from src.log_analyzer_agent.core.improved_graph import run_improved_analysis
         
-        # Create unified state
-        state = State(
-            messages=[],
+        logger.info(f"🔧 Running improved analysis with features: {features}")
+        result = await run_improved_analysis(
             log_content=log_content,
-            features=features or set(),
-            environment_details=environment_details
+            features=features
         )
-    except ImportError:
-        # Fallback to regular state
-        state = {
+    else:
+        # Use regular implementation
+        from src.log_analyzer_agent.graph import graph
+        from langchain_core.messages import HumanMessage
+        
+        logger.info(f"🔧 Running standard analysis with mode: {args.mode}")
+        
+        # Create initial state
+        initial_state = {
+            "messages": [HumanMessage(content=f"Analyze this log:\n{log_content}")],
             "log_content": log_content,
-            "environment_details": environment_details
+            "log_metadata": {},
+            "enabled_features": list(features)
         }
+        
+        # Run the graph
+        result = await graph.ainvoke(initial_state)
     
-    # Configuration
-    config = {
-        "configurable": {
-            "thread_id": "improved-analysis",
-            "model": "gemini:gemini-1.5-flash",
-            "max_search_results": 3,
-        }
-    }
+    # Display results
+    print("\n" + "="*80)
+    print("📊 ANALYSIS RESULTS")
+    print("="*80 + "\n")
     
-    # Process
-    result = await graph.ainvoke(state, config)
-    
-    # Extract analysis result
-    if hasattr(result, "analysis_result"):
-        return result.analysis_result
-    elif isinstance(result, dict) and "analysis_result" in result:
-        return result["analysis_result"]
+    if isinstance(result, dict) and "analysis_result" in result:
+        analysis = result["analysis_result"]
+        
+        # Summary
+        print(f"📋 Summary: {analysis.get('summary', 'No summary available')}\n")
+        
+        # Issues found
+        issues = analysis.get("issues", [])
+        if issues:
+            print(f"🔍 Found {len(issues)} issues:\n")
+            for i, issue in enumerate(issues[:10], 1):  # Show first 10
+                print(f"  {i}. [{issue.get('severity', 'unknown').upper()}] {issue.get('type', 'Unknown')}")
+                print(f"     {issue.get('message', '')[:100]}...")
+                if i == 10 and len(issues) > 10:
+                    print(f"\n  ... and {len(issues) - 10} more issues")
+        
+        # Recommendations
+        recommendations = analysis.get("recommendations", [])
+        if recommendations:
+            print(f"\n💡 Recommendations ({len(recommendations)}):\n")
+            for i, rec in enumerate(recommendations[:5], 1):  # Show first 5
+                print(f"  {i}. [{rec.get('priority', 'medium').upper()}] {rec.get('category', 'General')}")
+                print(f"     {rec.get('action', 'No action specified')}")
+                if "command" in rec:
+                    print(f"     Command: {rec['command']}")
+                elif "commands" in rec:
+                    print(f"     Commands:")
+                    for cmd in rec['commands'][:3]:
+                        print(f"       - {cmd}")
+        
+        # Specialized insights (if using improved mode)
+        if "specialized_insights" in analysis:
+            insights = analysis["specialized_insights"]
+            print("\n🎯 Specialized Insights:")
+            
+            # Different insights based on log type
+            if analysis.get("log_type") == "hdfs":
+                cluster_health = insights.get("cluster_health", {})
+                print(f"  - Cluster Health: {cluster_health.get('status', 'unknown').upper()}")
+                print(f"    {cluster_health.get('message', '')}")
+                
+            elif analysis.get("log_type") == "security":
+                threat_assessment = insights.get("threat_assessment", {})
+                print(f"  - Threat Level: {threat_assessment.get('level', 'unknown').upper()}")
+                print(f"    {threat_assessment.get('message', '')}")
+                
+            elif analysis.get("log_type") == "application":
+                service_health = insights.get("service_health", {})
+                print(f"  - Service Health: {service_health.get('status', 'unknown').upper()}")
+                print(f"    Availability: {service_health.get('availability', 0):.1f}%")
     else:
-        return result
+        print("❌ No analysis results available")
+    
+    print("\n" + "="*80)
 
 
-async def demonstrate_improved_features():
-    """Demonstrate the improved implementation features."""
-    print("\n=== Improved Implementation Demo ===\n")
+async def run_benchmark_mode():
+    """Run benchmarks comparing different implementations."""
+    print("🏃 Running benchmark mode...")
     
-    # Example 1: Large log with streaming
-    large_log = "\n".join([
-        f"2024-01-20 10:00:{i:02d} ERROR [app.service] Connection timeout"
-        for i in range(60)
-    ] * 100)  # Simulate large log
-    
-    print("1. Testing STREAMING for large logs...")
-    start = time.time()
-    result = await process_log_improved(
-        large_log,
-        features={"streaming"}
-    )
-    elapsed = time.time() - start
-    print(f"   Processed {len(large_log)/1024:.1f}KB in {elapsed:.2f}s")
-    
-    # Example 2: Specialized analysis
-    hdfs_log = """
-    2024-01-20 10:00:00 INFO [NameNode] BLOCK* blk_123 is UNDER_REPLICATED
-    2024-01-20 10:00:01 WARN [DataNode] Slow BlockReceiver write packet
-    2024-01-20 10:00:02 ERROR [NameNode] HDFS Safe mode is ON
-    """
-    
-    print("\n2. Testing SPECIALIZED SUBGRAPH for HDFS logs...")
-    result = await process_log_improved(hdfs_log)
-    if isinstance(result, dict):
-        print(f"   Detected log type: {result.get('log_type', 'unknown')}")
-        print(f"   Issues found: {len(result.get('issues', []))}")
-    
-    # Example 3: Circuit breaker protection
-    problematic_log = "ERROR " * 10000  # Potentially problematic
-    
-    print("\n3. Testing CIRCUIT BREAKER protection...")
+    # Import benchmark module
     try:
-        result = await process_log_improved(problematic_log)
-        print("   Analysis completed with circuit breaker protection")
-    except Exception as e:
-        print(f"   Circuit breaker prevented runaway process: {e}")
+        from src.log_analyzer_agent.benchmarks import run_benchmarks
+        await run_benchmarks()
+    except ImportError:
+        print("❌ Benchmark module not found")
+        print("   Benchmarks are not yet implemented")
 
 
-async def benchmark_modes():
-    """Benchmark different modes to show performance differences."""
-    example_log = """
-    2023-08-15T14:25:12.345Z ERROR [app.main] Failed to connect to database: Connection refused
-    2023-08-15T14:25:14.123Z FATAL [app.main] Application startup failed: Database connection error
-    """
+def main():
+    """Main entry point with argument parsing."""
+    parser = argparse.ArgumentParser(
+        description="Log Analyzer Agent - Analyze system logs and provide insights"
+    )
     
-    print("Benchmarking different modes...")
-    print("=" * 60)
+    # Mode selection
+    parser.add_argument(
+        "--mode",
+        choices=["minimal", "interactive", "memory", "improved", "benchmark"],
+        default="minimal",
+        help="Analysis mode (default: minimal)"
+    )
     
-    # Minimal mode
-    start = time.time()
-    result = await process_log_minimal(example_log)
-    minimal_time = time.time() - start
-    print(f"Minimal mode: {minimal_time:.2f}s")
+    # File input
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        help="Path to log file to analyze"
+    )
     
-    # Interactive mode
-    start = time.time()
-    result, _ = await process_log_interactive(example_log)
-    interactive_time = time.time() - start
-    print(f"Interactive mode: {interactive_time:.2f}s")
+    # Improved mode flag
+    parser.add_argument(
+        "--use-improved",
+        action="store_true",
+        help="Use improved implementation with all enhancements"
+    )
     
-    # Memory mode (if available)
-    if os.getenv("DATABASE_URL"):
-        try:
-            start = time.time()
-            result = await process_log_with_memory(example_log)
-            memory_time = time.time() - start
-            print(f"Memory mode: {memory_time:.2f}s")
-        except Exception as e:
-            print(f"Memory mode: Failed ({e})")
+    # API server mode
+    parser.add_argument(
+        "--api",
+        action="store_true",
+        help="Run as API server instead of CLI"
+    )
     
-    # Improved mode (if available)
-    if os.getenv("USE_IMPROVED_LOG_ANALYZER", "false").lower() == "true":
-        try:
-            start = time.time()
-            result = await process_log_improved(example_log)
-            improved_time = time.time() - start
-            print(f"Improved mode: {improved_time:.2f}s")
-        except Exception as e:
-            print(f"Improved mode: Not available ({e})")
-    
-    print("\nPerformance comparison:")
-    print(f"Interactive overhead: {((interactive_time/minimal_time) - 1) * 100:.1f}%")
-
-
-async def main():
-    """Main function demonstrating different modes."""
-    # Example log file
-    example_log = """
-    2023-08-15T14:25:12.345Z ERROR [app.main] Failed to connect to database: Connection refused
-    2023-08-15T14:25:12.567Z INFO [app.main] Retrying database connection (attempt 1/5)
-    2023-08-15T14:25:13.123Z ERROR [app.main] Retry failed: Connection refused
-    2023-08-15T14:25:14.123Z FATAL [app.main] Application startup failed: Database connection error
-    """
-    
-    # Example environment details
-    environment_details = {
-        "software": "MyApp v1.2.3",
-        "database": "PostgreSQL 14.5",
-        "runtime": "Python 3.9 on Ubuntu 22.04"
-    }
-    
-    print("Log Analyzer Agent - Lightweight Mode Demo")
-    print("=" * 60)
-    
-    # Test minimal mode
-    print("\n1. Testing MINIMAL mode (lightest)...")
-    result = await process_log_minimal(example_log, environment_details)
-    print_analysis_result(result, "Minimal Analysis")
-    
-    # Test interactive mode
-    print("\n2. Testing INTERACTIVE mode...")
-    result, needs_input = await process_log_interactive(example_log, environment_details)
-    print_analysis_result(result, "Interactive Analysis")
-    
-    # Test memory mode if database is available
-    if os.getenv("DATABASE_URL"):
-        print("\n3. Testing MEMORY mode (full features)...")
-        try:
-            result = await process_log_with_memory(
-                example_log,
-                user_id="demo_user",
-                application_name="MyApp",
-                environment_details=environment_details
-            )
-            print_analysis_result(result, "Memory-Enhanced Analysis")
-        except Exception as e:
-            print(f"Memory mode failed: {e}")
-    else:
-        print("\n3. MEMORY mode skipped (no DATABASE_URL)")
-    
-    # Run benchmark
-    print("\n" + "=" * 60)
-    await benchmark_modes()
-    
-    # Demonstrate improved features if enabled
-    if os.getenv("USE_IMPROVED_LOG_ANALYZER", "false").lower() == "true":
-        print("\n" + "=" * 60)
-        await demonstrate_improved_features()
-
-
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Log Analyzer Agent v2")
-    parser.add_argument("--mode", choices=["demo", "benchmark", "minimal", "interactive", "memory", "improved"], 
-                       default="demo", help="Run mode")
-    parser.add_argument("--log-file", help="Path to log file to analyze")
-    parser.add_argument("--use-improved", action="store_true", 
-                       help="Use improved implementation (can also set USE_IMPROVED_LOG_ANALYZER=true)")
+    # Development mode
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Run API server in development mode with auto-reload"
+    )
     
     args = parser.parse_args()
     
-    # Set improved flag if requested
-    if args.use_improved:
-        os.environ["USE_IMPROVED_LOG_ANALYZER"] = "true"
+    # Validate API keys
+    validate_api_keys()
     
-    if args.mode == "benchmark":
-        asyncio.run(benchmark_modes())
-    elif args.mode == "improved":
-        if args.log_file:
-            with open(args.log_file, 'r') as f:
-                log_content = f.read()
-            result = asyncio.run(process_log_improved(log_content))
-            print_analysis_result(result, "Improved Analysis")
+    # Run appropriate mode
+    if args.api:
+        # Import and run API server
+        from main_api import run_server, run_dev_server
+        
+        if args.dev:
+            run_dev_server()
         else:
-            asyncio.run(demonstrate_improved_features())
-    elif args.mode in ["minimal", "interactive", "memory"] and args.log_file:
-        # Process a specific log file
-        with open(args.log_file, 'r') as f:
-            log_content = f.read()
-        
-        if args.mode == "minimal":
-            result = asyncio.run(process_log_minimal(log_content))
-        elif args.mode == "interactive":
-            result, _ = asyncio.run(process_log_interactive(log_content))
-        else:  # memory
-            result = asyncio.run(process_log_with_memory(log_content))
-        
-        print_analysis_result(result, f"{args.mode.title()} Analysis")
+            run_server()
+    elif args.mode == "benchmark":
+        asyncio.run(run_benchmark_mode())
     else:
-        asyncio.run(main())
+        # Run CLI mode
+        asyncio.run(run_cli_mode(args))
+
+
+if __name__ == "__main__":
+    main()

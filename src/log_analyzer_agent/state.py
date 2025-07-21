@@ -79,8 +79,8 @@ class CoreWorkingState:
     This is the base state that all other working states extend.
     """
     # Core fields (always present)
-    messages: Annotated[Sequence[AnyMessage], add_messages]
-    log_content: str
+    log_content: str = ""
+    messages: Annotated[Sequence[AnyMessage], add_messages] = field(default_factory=list)
     log_metadata: Dict[str, Any] = field(default_factory=dict)
     
     # Analysis state
@@ -147,7 +147,7 @@ class StreamingWorkingState(InteractiveWorkingState):
     chunk_results: List[Dict[str, Any]] = field(default_factory=list)
     
     # Checkpointing support
-    checkpoint_id: Optional[str] = None
+    checkpoint_identifier: Optional[str] = None
     last_checkpoint: Optional[datetime] = None
     checkpoint_metadata: Dict[str, Any] = field(default_factory=dict)
     
@@ -163,9 +163,9 @@ class StreamingWorkingState(InteractiveWorkingState):
     def create_checkpoint(self) -> str:
         """Create a checkpoint and return its ID."""
         from uuid import uuid4
-        self.checkpoint_id = f"ckpt_{uuid4().hex[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        self.checkpoint_identifier = f"ckpt_{uuid4().hex[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.last_checkpoint = datetime.now()
-        return self.checkpoint_id
+        return self.checkpoint_identifier
 
 
 @dataclass

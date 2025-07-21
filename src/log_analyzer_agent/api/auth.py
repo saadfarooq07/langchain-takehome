@@ -8,16 +8,16 @@ from ..services.auth_service import AuthService
 from .models import UserResponse
 
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 def get_auth_service() -> AuthService:
     """Get authentication service instance."""
     import os
 
-    db_url = os.getenv(
-        "DATABASE_URL", "postgresql://loganalyzer:password@localhost:5432/loganalyzer"
-    )
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        raise ValueError("DATABASE_URL environment variable is required. Please set it in your .env file.")
     return AuthService(db_url)
 
 

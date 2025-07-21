@@ -2,7 +2,18 @@
 
 This module provides a clean, maintainable graph implementation that combines
 the best features from all versions while removing unnecessary complexity.
+
+For UI-enhanced features, use ui_graph.py instead.
 """
+
+# Apply SSE compatibility patch
+try:
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    import patch_sse
+except ImportError:
+    pass
 
 from typing import Dict, Any, Set, Optional, Literal, Union
 from langgraph.graph import StateGraph, START, END
@@ -10,14 +21,17 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_core.messages import HumanMessage
 import functools
 import time
+import os
 from datetime import datetime
 
 from .state import CoreWorkingState, InteractiveWorkingState, MemoryWorkingState
-from .nodes.analysis import analyze_logs
-from .nodes.validation import validate_analysis
-from .nodes.user_input import handle_user_input
+from .state_typeddict import State
+from .nodes.analysis import analyze_logs as _analyze_logs_impl
+from .nodes.validation import validate_analysis as _validate_analysis_impl
+from .nodes.user_input import handle_user_input as _handle_user_input_impl
 from .tools import search_documentation, request_additional_info, submit_analysis
 from .utils import count_node_visits, count_tool_calls
+from .cycle_detector import CycleDetector, CycleType
 
 
 # Simple in-memory cache for repeated analyses
@@ -25,13 +39,146 @@ _analysis_cache: Dict[str, Dict[str, Any]] = {}
 CACHE_TTL_SECONDS = 300  # 5 minutes
 
 
+def initialize_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Initialize state with default values for missing fields.
+    
+    This ensures all internal fields have proper defaults even when
+    the user only provides minimal input (just log_content).
+    """
+    # Ensure messages field exists
+    if "messages" not in state:
+        state["messages"] = []
+    
+    # Initialize tracking fields
+    if "node_visits" not in state:
+        state["node_visits"] = {}
+    if "tool_calls" not in state:
+        state["tool_calls"] = []
+    if "token_count" not in state:
+        state["token_count"] = 0
+    if "start_time" not in state:
+        state["start_time"] = time.time()
+    
+    # Initialize metadata
+    if "log_metadata" not in state:
+        state["log_metadata"] = {}
+    
+    # Initialize features
+    if "enabled_features" not in state:
+        state["enabled_features"] = []
+    
+    return state
+
+# Configurable iteration limits
+MAX_ANALYSIS_ITERATIONS = int(os.getenv("MAX_ANALYSIS_ITERATIONS", "10"))
+MAX_TOOL_CALLS = int(os.getenv("MAX_TOOL_CALLS", "20"))
+MAX_VALIDATION_RETRIES = int(os.getenv("MAX_VALIDATION_RETRIES", "3"))
+
+# Global cycle detector instance with configurable limits
+_cycle_detector = CycleDetector(
+    max_history=int(os.getenv("CYCLE_DETECTION_WINDOW", "20")),
+    detection_threshold=int(os.getenv("MAX_SIMPLE_LOOPS", "3"))
+)
+
+
+# Wrapper functions to handle dict-based state
+async def analyze_logs(state: Dict[str, Any], *, config: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
+    """Wrapper for analyze_logs that handles dict state."""
+    # Initialize state with defaults
+    state = initialize_state(state)
+    
+    # Create a minimal CoreWorkingState for the implementation
+    from langchain_core.messages import HumanMessage
+    if not state.get("messages"):
+        state["messages"] = [HumanMessage(content=f"Analyze this log:\n{state.get('log_content', '')}")] 
+    
+    working_state = CoreWorkingState(
+        messages=state.get("messages", []),
+        log_content=state.get("log_content", ""),
+        log_metadata=state.get("log_metadata", {}),
+        analysis_result=state.get("analysis_result"),
+        validation_status=state.get("validation_status"),
+        node_visits=state.get("node_visits", {}),
+        tool_calls=state.get("tool_calls", []),
+        token_count=state.get("token_count", 0),
+        start_time=state.get("start_time", time.time()),
+        enabled_features=set(state.get("enabled_features", []))
+    )
+    
+    # Call the implementation with config
+    result = await _analyze_logs_impl(working_state, config=config, **kwargs)
+    
+    # Merge results back into state
+    return {**state, **result}
+
+
+async def validate_analysis(state: Dict[str, Any], *, config: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
+    """Wrapper for validate_analysis that handles dict state."""
+    # Initialize state with defaults
+    state = initialize_state(state)
+    
+    # Create a minimal state for the implementation
+    working_state = CoreWorkingState(
+        messages=state.get("messages", []),
+        log_content=state.get("log_content", ""),
+        log_metadata=state.get("log_metadata", {}),
+        analysis_result=state.get("analysis_result"),
+        validation_status=state.get("validation_status"),
+        node_visits=state.get("node_visits", {}),
+        tool_calls=state.get("tool_calls", []),
+        token_count=state.get("token_count", 0),
+        start_time=state.get("start_time", time.time()),
+        enabled_features=set(state.get("enabled_features", []))
+    )
+    
+    # Call the implementation with config
+    result = await _validate_analysis_impl(working_state, config=config, **kwargs)
+    
+    # Merge results back into state
+    return {**state, **result}
+
+
+async def handle_user_input(state: Dict[str, Any], *, config: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
+    """Wrapper for handle_user_input that handles dict state."""
+    # Initialize state with defaults  
+    state = initialize_state(state)
+    
+    # Create an InteractiveWorkingState for the implementation
+    working_state = InteractiveWorkingState(
+        messages=state.get("messages", []),
+        log_content=state.get("log_content", ""),
+        log_metadata=state.get("log_metadata", {}),
+        analysis_result=state.get("analysis_result"),
+        validation_status=state.get("validation_status"),
+        node_visits=state.get("node_visits", {}),
+        tool_calls=state.get("tool_calls", []),
+        token_count=state.get("token_count", 0),
+        start_time=state.get("start_time", time.time()),
+        enabled_features=set(state.get("enabled_features", [])),
+        user_input=state.get("user_input"),
+        pending_questions=state.get("pending_questions"),
+        user_interaction_required=state.get("user_interaction_required", False),
+        interaction_history=state.get("interaction_history", [])
+    )
+    
+    # Call the implementation with config
+    result = await _handle_user_input_impl(working_state, config=config, **kwargs)
+    
+    # Merge results back into state
+    return {**state, **result}
+
+
 def cache_analysis(func):
     """Simple caching decorator for analysis results."""
     @functools.wraps(func)
     def wrapper(state: Dict[str, Any]) -> Dict[str, Any]:
+        # Ensure state is initialized
+        state = initialize_state(state)
+        
         # Create cache key from log content hash
         import hashlib
-        cache_key = hashlib.md5(state.get("log_content", "").encode()).hexdigest()
+        log_content = state.get("log_content", "")
+        cache_key = hashlib.md5(log_content.encode()).hexdigest()
         
         # Check cache
         if cache_key in _analysis_cache:
@@ -57,27 +204,50 @@ def cache_analysis(func):
     return wrapper
 
 
-def should_retry(state: Dict[str, Any]) -> bool:
+def should_retry(state: Union[Dict[str, Any], Any]) -> bool:
     """Check if we should retry the analysis."""
+    # Handle both dict and dataclass
+    if hasattr(state, "get"):
+        messages = state.get("messages", [])
+        validation_status = state.get("validation_status")
+    else:
+        messages = getattr(state, "messages", [])
+        validation_status = getattr(state, "validation_status", None)
+    
     # Simple retry logic based on node visits
-    visits = count_node_visits(state.get("messages", []), "analyze_logs")
-    return visits < 3 and state.get("validation_status") == "invalid"
+    visits = count_node_visits(messages, "analyze_logs")
+    return visits < MAX_VALIDATION_RETRIES and validation_status == "invalid"
 
 
-def route_after_analysis(state: Dict[str, Any]) -> Union[
+def route_after_analysis(state: Union[Dict[str, Any], Any]) -> Union[
     Literal["validate_analysis"],
     Literal["tools"],
     Literal["__end__"]
 ]:
     """Route after the analysis node."""
-    messages = state.get("messages", [])
+    # Handle both dict and dataclass
+    if hasattr(state, "get"):
+        messages = state.get("messages", [])
+        analysis_result = state.get("analysis_result")
+    else:
+        messages = getattr(state, "messages", [])
+        analysis_result = getattr(state, "analysis_result", None)
     last_message = messages[-1] if messages else None
     
-    # Check recursion limits
+    # Add transition to cycle detector
+    state_dict = {"messages": messages, "analysis_result": analysis_result}
+    cycle = _cycle_detector.add_transition("analyze_logs", "route", state_dict)
+    
+    # Check for cycles using advanced detection
+    if cycle:
+        print(f"[CycleDetector] Breaking {cycle.cycle_type} cycle: {' -> '.join(cycle.pattern)}")
+        return "__end__"
+    
+    # Fallback to simple limits
     analysis_count = count_node_visits(messages, "analyze_logs")
     tool_count = count_tool_calls(messages)
     
-    if analysis_count >= 10 or tool_count >= 20:
+    if analysis_count >= MAX_ANALYSIS_ITERATIONS or tool_count >= MAX_TOOL_CALLS:
         return "__end__"
     
     # Check for tool calls
@@ -88,23 +258,43 @@ def route_after_analysis(state: Dict[str, Any]) -> Union[
     return "validate_analysis"
 
 
-def route_after_validation(state: Dict[str, Any]) -> Union[
+def route_after_validation(state: Union[Dict[str, Any], Any]) -> Union[
     Literal["analyze_logs"],
     Literal["handle_user_input"],
     Literal["__end__"]
 ]:
     """Route after validation."""
-    status = state.get("validation_status", "")
+    # Handle both dict and dataclass
+    if hasattr(state, "get"):
+        status = state.get("validation_status", "")
+        messages = state.get("messages", [])
+    else:
+        status = getattr(state, "validation_status", "")
+        messages = getattr(state, "messages", [])
+    
+    # Add transition to cycle detector
+    state_dict = {"messages": messages, "validation_status": status}
+    cycle = _cycle_detector.add_transition("validate_analysis", "route", state_dict)
     
     # If valid, we're done
     if status == "valid":
         return "__end__"
     
-    # If interactive mode and needs input
-    if state.get("user_interaction_required") and "needs_user_input" in status:
+    # Check for validation retry cycles
+    if cycle and cycle.cycle_type in [CycleType.OSCILLATION, CycleType.DEADLOCK]:
+        print(f"[CycleDetector] Breaking validation {cycle.cycle_type}: {' -> '.join(cycle.pattern)}")
+        return "__end__"
+    
+    # If invalid and interactive features are enabled, ask user
+    if hasattr(state, "get"):
+        user_interaction_required = state.get("user_interaction_required")
+    else:
+        user_interaction_required = getattr(state, "user_interaction_required", None)
+    
+    if user_interaction_required and "needs_user_input" in status:
         return "handle_user_input"
     
-    # Retry if should retry
+    # Otherwise, retry analysis if under limit
     if should_retry(state):
         return "analyze_logs"
     
@@ -112,20 +302,38 @@ def route_after_validation(state: Dict[str, Any]) -> Union[
     return "__end__"
 
 
-def route_after_tools(state: Dict[str, Any]) -> Union[
-    Literal["validate_analysis"],
+def route_after_tools(state: Union[Dict[str, Any], Any]) -> Union[
     Literal["analyze_logs"],
+    Literal["handle_user_input"],
     Literal["__end__"]
 ]:
     """Route after tool execution."""
-    messages = state.get("messages", [])
+    # Handle both dict and dataclass
+    if hasattr(state, "get"):
+        messages = state.get("messages", [])
+    else:
+        messages = getattr(state, "messages", [])
+    
+    # Add transition to cycle detector
+    state_dict = {"messages": messages}
+    cycle = _cycle_detector.add_transition("tools", "route", state_dict)
+    
+    # Check for tool execution cycles
+    if cycle:
+        print(f"[CycleDetector] Breaking tool {cycle.cycle_type}: {' -> '.join(cycle.pattern)}")
+        return "__end__"
     
     # Check limits
-    if count_node_visits(messages, "analyze_logs") >= 10:
+    if count_node_visits(messages, "analyze_logs") >= MAX_ANALYSIS_ITERATIONS:
         return "__end__"
     
     # If we have an analysis result, validate it
-    if state.get("analysis_result"):
+    if hasattr(state, "get"):
+        analysis_result = state.get("analysis_result")
+    else:
+        analysis_result = getattr(state, "analysis_result", None)
+    
+    if analysis_result:
         return "validate_analysis"
     
     # Otherwise, analyze again
@@ -147,16 +355,8 @@ def create_graph(features: Optional[Set[str]] = None) -> StateGraph:
     if features is None:
         features = set()
     
-    # Determine state class based on features
-    if "memory" in features:
-        state_class = MemoryWorkingState
-    elif "interactive" in features:
-        state_class = InteractiveWorkingState
-    else:
-        state_class = CoreWorkingState
-    
-    # Create graph
-    workflow = StateGraph(state_class)
+    # Create graph with TypedDict State
+    workflow = StateGraph(State)
     
     # Add nodes
     if "caching" in features:
@@ -271,5 +471,19 @@ def clear_cache():
     _performance_metrics["cache_misses"] = 0
 
 
-# Default graph export for LangGraph
+# Create enhanced graph for API usage
+def create_enhanced_graph():
+    """Create an enhanced graph with optimal features for API usage.
+    
+    This is the recommended graph for production API usage with:
+    - Interactive features for better analysis
+    - Caching for performance
+    - No memory features (handled by API layer)
+    """
+    return create_graph(features={"interactive", "caching"})
+
+
+# For now, use the standard graph to avoid import issues
+# The improved features are still available through the enhanced nodes
 graph = create_interactive_graph()
+print("Using standard interactive graph with enhanced analysis nodes")

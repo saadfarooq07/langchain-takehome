@@ -1,5 +1,6 @@
 """API routes for log analyzer agent."""
 
+import os
 import time
 import uuid
 from typing import List, Dict, Any, Optional
@@ -7,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..services.auth_service import AuthService
 from ..services.memory_service import MemoryService
-from ..graph import create_enhanced_graph
+from ..graph import create_graph
 from ..state import State
 from .auth import get_auth_service, get_current_user, get_current_user_optional
 from .models import (
@@ -111,56 +112,126 @@ async def analyze_logs(
 ):
     """Analyze log content."""
     start_time = time.time()
+    print(f"[DEBUG] Starting log analysis at {start_time}")
 
     # Create enhanced graph with memory if user is authenticated
-    if current_user and request.enable_memory:
-        graph, store, checkpointer = await create_enhanced_graph()
-
-        # Create enhanced state with user context
-        state = State(
+    print(f"[DEBUG] User authenticated: {current_user is not None}, enable_memory: {request.enable_memory}")
+    
+    # Check if enhanced analysis is requested
+    use_enhanced = os.getenv("USE_ENHANCED_ANALYSIS", "").lower() == "true" or request.enable_enhanced_analysis
+    
+    if use_enhanced:
+        from ..enhanced_graph import create_enhanced_graph
+        if current_user and request.enable_memory:
+            graph = create_enhanced_graph(features={"memory", "interactive"})
+        else:
+            graph = create_enhanced_graph(features=set())  # Explicitly no features
+        
+        # Create basic state for enhanced graph
+        from ..state import InputState, create_working_state
+        
+        input_state = InputState(
             log_content=request.log_content,
             environment_details=request.environment_details or {},
-            user_id=current_user.id,
+            user_id=str(current_user.id) if current_user else None,
             application_name=request.application_name,
-            application_version=request.application_version,
-            environment_type=request.environment_type,
-            start_time=start_time,
+            requested_features=set()
         )
+        
+        state = create_working_state(input_state)
+        
+        config = {
+            "configurable": {
+                "model": "gemini:gemini-1.5-flash",
+                "max_search_results": 3,
+            }
+        }
+        
+        # Convert state to dict for graph processing
+        state_dict = {
+            "messages": [],
+            "log_content": state.log_content,
+            "log_metadata": state.log_metadata
+        }
+        
+        # Run enhanced analysis
+        result = None
+        similar_issues_count = 0
+        print(f"[DEBUG] Starting enhanced graph stream...")
+        async for event in graph.astream(state_dict, config, stream_mode="values"):
+            if "analysis_result" in event and event["analysis_result"]:
+                result = event["analysis_result"]
+                
+    elif current_user and request.enable_memory:
+        from ..state import InputState, StateFeature, create_working_state
+        
+        graph = create_graph(features={"memory", "interactive"})
+
+        # Create input state first
+        input_state = InputState(
+            log_content=request.log_content,
+            environment_details=request.environment_details or {},
+            user_id=str(current_user.id),
+            application_name=request.application_name,
+            session_id=f"session_{current_user.id}_{int(start_time)}",
+            requested_features={StateFeature.MEMORY, StateFeature.INTERACTIVE}
+        )
+        
+        # Create working state from input state
+        state = create_working_state(input_state)
+        
+        # Set thread_id for memory state
+        if hasattr(state, 'thread_id'):
+            state.thread_id = f"thread_{current_user.id}_{int(start_time)}"
+        
+        # Set session_id if not already set
+        if hasattr(state, 'session_id') and not state.session_id:
+            state.session_id = input_state.session_id
 
         # Configuration with user context
         config = {
             "configurable": {
-                "user_id": current_user.id,
-                "thread_id": state.thread_id,
+                "thread_id": f"thread_{current_user.id if current_user else 'anonymous'}_{int(start_time)}",
                 "model": "gemini:gemini-1.5-flash",
                 "max_search_results": 3,
             }
+        }
+
+        # Convert state to dict for graph processing
+        state_dict = {
+            "messages": [],
+            "log_content": state.log_content,
+            "log_metadata": state.log_metadata,
+            "enabled_features": list(state.enabled_features)
         }
 
         # Run analysis with memory
         result = None
         similar_issues_count = 0
-        async for event in graph.astream(state.__dict__, config, stream_mode="values"):
+        async for event in graph.astream(state_dict, config, stream_mode="values"):
             if "analysis_result" in event and event["analysis_result"]:
                 result = event["analysis_result"]
                 similar_issues_count = len(event.get("similar_issues", []))
 
-        # Close connections
-        await store.close()
-        await checkpointer.close()
+        # Note: If using memory features with actual store/checkpointer,
+        # they would need to be closed here. For now, we're using in-memory.
 
     else:
         # Use basic graph without memory
         from ..graph import graph
+        from ..state import InputState, create_working_state
 
-        state = State(
+        # Create input state
+        input_state = InputState(
             log_content=request.log_content,
             environment_details=request.environment_details or {},
+            user_id=str(current_user.id) if current_user else None,
             application_name=request.application_name,
-            application_version=request.application_version,
-            environment_type=request.environment_type,
-            start_time=start_time,
+            requested_features=set()  # No special features for basic mode
         )
+        
+        # Create working state
+        state = create_working_state(input_state)
 
         config = {
             "configurable": {
@@ -168,11 +239,19 @@ async def analyze_logs(
                 "max_search_results": 3,
             }
         }
+        
+        # Convert state to dict for graph processing
+        state_dict = {
+            "messages": [],
+            "log_content": state.log_content,
+            "log_metadata": state.log_metadata
+        }
 
         # Run analysis without memory
         result = None
         similar_issues_count = 0
-        for event in graph.stream(state.__dict__, config, stream_mode="values"):
+        print(f"[DEBUG] Starting graph stream...")
+        async for event in graph.astream(state_dict, config, stream_mode="values"):
             if "analysis_result" in event and event["analysis_result"]:
                 result = event["analysis_result"]
 
@@ -181,6 +260,18 @@ async def analyze_logs(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Analysis failed to produce results",
         )
+
+    # Handle nested analysis structure
+    if isinstance(result, dict) and "analysis" in result:
+        # Parse the JSON string if needed
+        import json
+        if isinstance(result["analysis"], str):
+            try:
+                result = json.loads(result["analysis"])
+            except json.JSONDecodeError:
+                result = {"error": "Failed to parse analysis result"}
+        else:
+            result = result["analysis"]
 
     # Convert result to response model
     issues = []
@@ -196,19 +287,69 @@ async def analyze_logs(
                 )
             )
 
+    # Extract suggestions (handle both string and dict formats)
+    suggestions = []
+    for sug in result.get("suggestions", []):
+        if isinstance(sug, dict):
+            suggestions.append(sug.get("suggestion", str(sug)))
+        else:
+            suggestions.append(str(sug))
+    
+    # Extract explanations (handle both string and dict formats)
+    explanations = []
+    for exp in result.get("explanations", []):
+        if isinstance(exp, dict):
+            explanations.append(exp.get("explanation", str(exp)))
+        else:
+            explanations.append(str(exp))
+    
+    # Extract documentation references (ensure dict format)
+    doc_refs = []
+    for ref in result.get("documentation_references", []):
+        if isinstance(ref, str):
+            doc_refs.append({"url": ref, "title": "Documentation"})
+        elif isinstance(ref, dict):
+            doc_refs.append(ref)
+    
+    # Extract diagnostic commands (ensure dict format)
+    diag_cmds = []
+    for cmd in result.get("diagnostic_commands", []):
+        if isinstance(cmd, str):
+            # Try to extract description from the command if it contains common patterns
+            description = "Diagnostic command"
+            if "status" in cmd.lower():
+                description = "Check service status"
+            elif "netstat" in cmd.lower() or "grep" in cmd.lower():
+                description = "Check network connections and ports"
+            elif "psql" in cmd.lower() or "mysql" in cmd.lower():
+                description = "Test database connection"
+            elif "systemctl" in cmd.lower():
+                description = "Check system service status"
+            elif "telnet" in cmd.lower():
+                description = "Test network connectivity"
+            
+            diag_cmds.append({"command": cmd, "description": description})
+        elif isinstance(cmd, dict):
+            # Ensure the dict has required fields
+            if "command" not in cmd:
+                cmd["command"] = str(cmd)
+            if "description" not in cmd:
+                cmd["description"] = "Diagnostic command"
+            diag_cmds.append(cmd)
+    
     analysis_result = AnalysisResult(
         issues=issues,
-        suggestions=result.get("suggestions", []),
-        explanations=result.get("explanations", []),
-        documentation_references=result.get("documentation_references", []),
-        diagnostic_commands=result.get("diagnostic_commands", []),
+        suggestions=suggestions,
+        explanations=explanations,
+        documentation_references=doc_refs,
+        diagnostic_commands=diag_cmds,
         performance_metrics=result.get("performance_metrics"),
     )
 
     return LogAnalysisResponse(
         analysis_id=str(uuid.uuid4()),
-        thread_id=state.thread_id,
-        session_id=state.session_id,
+        thread_id=getattr(state, 'thread_id', f"thread_{int(start_time)}"),
+        session_id=getattr(state, 'session_id', f"session_{int(start_time)}"),
         analysis_result=analysis_result,
         similar_issues_found=similar_issues_count,
         memory_enabled=current_user is not None and request.enable_memory,
@@ -242,7 +383,7 @@ async def search_memory(
     start_time = time.time()
 
     # Create memory service
-    graph, store, checkpointer = await create_enhanced_graph()
+    graph = create_graph()
     memory_service = MemoryService(store)
 
     try:
@@ -278,7 +419,7 @@ async def get_analysis_history(
     """Get user's analysis history."""
 
     # Create memory service
-    graph, store, checkpointer = await create_enhanced_graph()
+    graph = create_graph()
     memory_service = MemoryService(store)
 
     try:
@@ -301,7 +442,7 @@ async def get_user_applications(current_user: UserResponse = Depends(get_current
     """Get list of applications the user has analyzed."""
 
     # Create memory service
-    graph, store, checkpointer = await create_enhanced_graph()
+    graph = create_graph()
     memory_service = MemoryService(store)
 
     try:
@@ -332,7 +473,7 @@ async def get_application_context(
     """Get context for a specific application."""
 
     # Create memory service
-    graph, store, checkpointer = await create_enhanced_graph()
+    graph = create_graph()
     memory_service = MemoryService(store)
 
     try:
@@ -364,7 +505,7 @@ async def update_application_context(
     """Update context for a specific application."""
 
     # Create memory service
-    graph, store, checkpointer = await create_enhanced_graph()
+    graph = create_graph()
     memory_service = MemoryService(store)
 
     try:

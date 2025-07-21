@@ -153,7 +153,9 @@ class IssueDetector:
             return {
                 "issues": [],
                 "explanations": [],
+                "root_cause": "",
                 "suggestions": [],
+                "recommendations": [],
                 "documentation_references": [],
                 "diagnostic_commands": []
             }
@@ -189,7 +191,9 @@ class IssueDetector:
             return {
                 "issues": [],
                 "explanations": [],
+                "root_cause": "",
                 "suggestions": [],
+                "recommendations": [],
                 "documentation_references": [],
                 "diagnostic_commands": []
             }
@@ -203,9 +207,12 @@ class IssueDetector:
             "severity": pattern.get('severity', 'error')
         }]
         
+        # Support both field names for compatibility
         explanations = [pattern.get('explanation', f"An issue of type '{issue_type}' was detected.")]
+        root_cause = pattern.get('explanation', f"An issue of type '{issue_type}' was detected.")
         
         suggestions = pattern.get('suggestions', [])[:3]  # Limit to 3
+        recommendations = pattern.get('suggestions', [])[:3]  # Also store as recommendations
         
         # Add system-specific suggestions
         if log_source == "HDFS" and 'block' in raw_log:
@@ -242,7 +249,9 @@ class IssueDetector:
         return {
             "issues": issues,
             "explanations": explanations,
+            "root_cause": root_cause,  # Include for compatibility
             "suggestions": suggestions,
+            "recommendations": recommendations,  # Include for compatibility
             "documentation_references": documentation_references,
             "diagnostic_commands": diagnostic_commands
         }

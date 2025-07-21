@@ -1,3 +1,14 @@
+# Multi-stage build for efficient image
+FROM oven/bun:1 as frontend-builder
+
+WORKDIR /frontend
+COPY frontend/package.json frontend/bun.lockb ./
+RUN bun install --frozen-lockfile
+
+COPY frontend/ ./
+RUN bun run build
+
+# Backend stage
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -18,11 +29,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the application code
 COPY . .
 
+# Copy built frontend from previous stage
+COPY --from=frontend-builder /frontend/build ./frontend/build
+
 # Install the package in development mode
 RUN pip install -e .
 
 # Expose port
 EXPOSE 8000
 
-# Command to run the application
-CMD ["python", "main.py", "--mode", "api"]
+# Simple startup - no complex CLI
+CMD ["python", "main.py"]

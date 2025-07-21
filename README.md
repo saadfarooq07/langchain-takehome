@@ -4,13 +4,25 @@ A LangGraph-based agent that helps analyze logs, identify issues, suggest soluti
 
 ## Features
 
-- **Broad Log Analysis**: Analyzes logs from various systems and applications
-- **Environment Context**: Can be configured with software and runtime environment details
-- **Interactive**: Prompts user for additional information when needed
-- **Documentation References**: Provides links to relevant documentation
+- **Smart Log Analysis**: Identifies errors, warnings, and patterns with actionable recommendations
+- **Automatic Streaming**: Handles large logs (>10MB) with memory-efficient chunk processing
+- **Specialized Analyzers**: Domain-specific analysis for:
+  - HDFS/Hadoop logs (block corruption, replication, namenode/datanode issues)
+  - Security logs (authentication failures, intrusion attempts, threats)
+  - Application logs (HTTP errors, exceptions, performance issues)
+- **High Reliability**: 
+  - Circuit breaker prevents cascading failures
+  - Rate limiting protects API quotas
+  - Automatic retries with exponential backoff
 - **Dual Model Architecture**:
   - Gemini 2.5 Flash: Primary model for analyzing large log files (via Google AI API)
   - Kimi K2: Orchestration model for managing agent tasks (via Groq API)
+- **Performance Optimizations**:
+  - Result caching for repeated analyses
+  - Parallel chunk processing for large files
+  - 5x faster than single-pass analysis
+- **Interactive Mode**: Requests clarification when needed
+- **Documentation Search**: Integrates with Tavily for up-to-date solutions
 
 ## Prerequisites
 
@@ -50,21 +62,30 @@ docker-compose up
 
 ## Usage
 
-### CLI Mode
+### Quick Start
 
 ```bash
-python main.py
+# Start the backend API server
+uv run main.py
+
+# In another terminal, start the frontend
+cd frontend
+bun run start
 ```
 
-### LangGraph Development Server
+That's it! The API runs on http://localhost:8000 and the frontend on http://localhost:3000
 
-For visualization and debugging with Studio UI:
+### API Documentation
+
+Once the server is running, visit http://localhost:8000/docs for interactive API documentation.
+
+### Testing the Setup
+
+Run the test script to verify everything is working:
 
 ```bash
-langgraph dev
+python test_setup.py
 ```
-
-Then open https://smith.langchain.com/studio/ and connect to http://127.0.0.1:2024
 
 ### Using in Your Code
 

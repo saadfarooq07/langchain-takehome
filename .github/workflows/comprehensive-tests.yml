@@ -1,0 +1,321 @@
+name: Comprehensive Test Suite
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  test-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test-suite: [unit, integration, functional]
+        python-version: ['3.10', '3.11', '3.12']
+      fail-fast: false
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -e .
+        
+    - name: Install test dependencies
+      run: |
+        pip install pytest pytest-asyncio pytest-cov pytest-html pytest-xdist
+        pip install psutil coverage[toml]
+        
+    - name: Run ${{ matrix.test-suite }} tests
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+        LANGGRAPH_STUDIO_API_KEY: ${{ secrets.LANGGRAPH_STUDIO_API_KEY }}
+      run: |
+        ./run_comprehensive_tests.py --suite ${{ matrix.test-suite }} --coverage --no-env-check
+        
+    - name: Upload coverage to Codecov
+      if: matrix.test-suite == 'unit' && matrix.python-version == '3.11'
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-${{ matrix.test-suite }}-py${{ matrix.python-version }}
+        path: |
+          test-results.xml
+          test-report.html
+          htmlcov/
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+    needs: test-matrix
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -e .
+        pip install pytest pytest-asyncio pytest-cov pytest-html psutil
+        
+    - name: Run E2E tests
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+        LANGGRAPH_STUDIO_API_KEY: ${{ secrets.LANGGRAPH_STUDIO_API_KEY }}
+      run: |
+        ./run_comprehensive_tests.py --suite e2e --verbose --no-env-check
+        
+    - name: Upload E2E results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: e2e-test-results
+        path: |
+          test-results.xml
+          test-report.html
+
+  performance-tests:
+    runs-on: ubuntu-latest
+    needs: test-matrix
+    if: github.event_name == 'schedule' || contains(github.event.head_commit.message, '[perf-test]')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -e .
+        pip install pytest pytest-asyncio psutil
+        
+    - name: Run performance tests
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      run: |
+        ./run_comprehensive_tests.py --suite performance --verbose --no-env-check
+        
+    - name: Upload performance results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: performance-test-results
+        path: |
+          test-results.xml
+          test-report.html
+
+  supabase-integration:
+    runs-on: ubuntu-latest
+    needs: test-matrix
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -e .
+        pip install pytest pytest-asyncio supabase psycopg2-binary
+        
+    - name: Run Supabase integration tests
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      run: |
+        pytest tests/integration/test_supabase_integration.py -v --tb=short
+        
+    - name: Upload Supabase test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: supabase-test-results
+        path: |
+          test-results.xml
+          test-report.html
+
+  langgraph-studio-integration:
+    runs-on: ubuntu-latest
+    needs: test-matrix
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -e .
+        pip install pytest pytest-asyncio langgraph-cli
+        
+    - name: Test LangGraph Studio deployment
+      env:
+        LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+        LANGGRAPH_STUDIO_API_KEY: ${{ secrets.LANGGRAPH_STUDIO_API_KEY }}
+      run: |
+        pytest tests/integration/test_langgraph_studio.py -v --tb=short
+        
+    - name: Upload LangGraph Studio results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: langgraph-studio-results
+        path: |
+          test-results.xml
+          test-report.html
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Run security scan
+      uses: pypa/gh-action-pip-audit@v1.0.8
+      with:
+        inputs: requirements.txt
+        
+    - name: Run Bandit security scan
+      run: |
+        pip install bandit
+        bandit -r src/ -f json -o bandit-report.json || true
+        
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-scan-results
+        path: bandit-report.json
+
+  test-summary:
+    runs-on: ubuntu-latest
+    needs: [test-matrix, e2e-tests, supabase-integration, langgraph-studio-integration]
+    if: always()
+    
+    steps:
+    - name: Download all test artifacts
+      uses: actions/download-artifact@v3
+      
+    - name: Generate test summary
+      run: |
+        echo "# Test Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -d "test-results-unit-py3.11" ]; then
+          echo "✅ Unit tests completed" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Unit tests failed" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ -d "test-results-integration-py3.11" ]; then
+          echo "✅ Integration tests completed" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Integration tests failed" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ -d "e2e-test-results" ]; then
+          echo "✅ E2E tests completed" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ E2E tests failed" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ -d "supabase-test-results" ]; then
+          echo "✅ Supabase integration tests completed" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Supabase integration tests failed" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ -d "langgraph-studio-results" ]; then
+          echo "✅ LangGraph Studio tests completed" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ LangGraph Studio tests failed" >> $GITHUB_STEP_SUMMARY
+        fi

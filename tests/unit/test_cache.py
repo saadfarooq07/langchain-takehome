@@ -282,7 +282,7 @@ class TestGlobalCache:
         # get_cache should return the configured instance
         assert get_cache() is cache
     
-    @patch('src.log_analyzer_agent.utils.cache._global_cache', None)
+    @patch('src.log_analyzer_agent.cache_utils.cache._global_cache', None)
     def test_get_cache_creates_default(self):
         """Test that get_cache creates default cache if none exists."""
         cache = get_cache()

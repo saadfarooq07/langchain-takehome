@@ -4,7 +4,7 @@ import pytest
 import time
 from unittest.mock import patch
 
-from src.log_analyzer_agent.utils.cache import (
+from src.log_analyzer_agent.cache import (
     AnalysisCache,
     CacheEntry,
     get_cache,

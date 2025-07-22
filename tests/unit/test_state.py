@@ -10,9 +10,9 @@ from src.log_analyzer_agent.state import (
     CoreState,
     InteractiveState,
     MemoryState,
-    create_state_class,
-    get_state_features
+    create_state_class
 )
+from src.log_analyzer_agent.state_compat import _get_state_features as get_state_features
 
 
 class TestCoreState:

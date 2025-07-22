@@ -3,12 +3,9 @@
 import pytest
 from pydantic import ValidationError
 
-from src.log_analyzer_agent.validation import (
-    AnalysisQualityCheck,
-    Issue,
-    Suggestion,
-    AnalysisResult
-)
+from src.log_analyzer_agent.nodes.validation import AnalysisQualityCheck
+from src.log_analyzer_agent.api.models import AnalysisIssue as Issue, AnalysisResult
+# Note: Suggestion class doesn't exist, using recommendations from AnalysisResult instead
 
 
 class TestIssueValidation:

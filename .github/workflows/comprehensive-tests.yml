@@ -72,7 +72,7 @@ jobs:
         name: codecov-umbrella
         
     - name: Upload test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: test-results-${{ matrix.test-suite }}-py${{ matrix.python-version }}
@@ -116,7 +116,7 @@ jobs:
         ./run_comprehensive_tests.py --suite e2e --verbose --no-env-check
         
     - name: Upload E2E results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: e2e-test-results
@@ -154,7 +154,7 @@ jobs:
         ./run_comprehensive_tests.py --suite performance --verbose --no-env-check
         
     - name: Upload performance results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: performance-test-results
@@ -207,7 +207,7 @@ jobs:
         pytest tests/integration/test_supabase_integration.py -v --tb=short
         
     - name: Upload Supabase test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: supabase-test-results
@@ -244,7 +244,7 @@ jobs:
         pytest tests/integration/test_langgraph_studio.py -v --tb=short
         
     - name: Upload LangGraph Studio results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: langgraph-studio-results
@@ -269,7 +269,7 @@ jobs:
         bandit -r src/ -f json -o bandit-report.json || true
         
     - name: Upload security scan results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: security-scan-results
@@ -282,7 +282,7 @@ jobs:
     
     steps:
     - name: Download all test artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       
     - name: Generate test summary
       run: |

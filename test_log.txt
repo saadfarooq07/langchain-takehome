@@ -1,0 +1,5 @@
+2024-01-15 10:23:45 ERROR [database] Connection timeout to database server at 192.168.1.100:5432
+2024-01-15 10:23:46 ERROR [database] Failed to establish connection after 3 retries
+2024-01-15 10:23:47 WARN [app] Database connection lost, switching to cache mode
+2024-01-15 10:23:48 ERROR [api] Request failed: Database unavailable
+2024-01-15 10:23:49 ERROR [api] HTTP 503 Service Unavailable returned to client

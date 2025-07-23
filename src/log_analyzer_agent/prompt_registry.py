@@ -119,7 +119,9 @@ class PromptRegistry:
             self.client = client or Client()
         else:
             self.client = None
-            asyncio.create_task(log_info("LangSmith integration disabled or API key not found"))
+            # Use synchronous logging during initialization
+            if os.getenv("LOG_SIDE_EFFECTS", "false").lower() == "true":
+                print("[INFO] LangSmith integration disabled or API key not found")
         
         self.enable_cache = enable_cache
         self.cache_dir = cache_dir or Path.home() / ".langchain" / "prompt_cache"

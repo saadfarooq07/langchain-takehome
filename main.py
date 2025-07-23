@@ -123,6 +123,11 @@ async def run_cli_mode(args):
     if isinstance(result, dict) and "analysis_result" in result:
         analysis = result["analysis_result"]
         
+        # Check if analysis is None
+        if analysis is None:
+            print("❌ Analysis failed - no results returned")
+            return
+        
         # Summary
         print(f"📋 Summary: {analysis.get('summary', 'No summary available')}\n")
         

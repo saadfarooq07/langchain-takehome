@@ -15,8 +15,8 @@ from pathlib import Path
 import asyncio
 import logging
 
-from langgraph.prebuilt import task
 from langchain_core.runnables import RunnableConfig
+from functools import lru_cache
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -49,6 +49,80 @@ class PersistenceConfig:
 
 # Global configuration instance
 persistence_config = PersistenceConfig()
+
+
+# Since LangGraph doesn't have a built-in task decorator, we'll use memoization
+# and state tracking to achieve the same effect
+
+# Global registry for executed tasks
+_executed_tasks: Dict[str, Any] = {}
+
+
+def _get_task_key(func_name: str, args: tuple, kwargs: dict) -> str:
+    """Generate a unique key for a task based on function and arguments."""
+    # Create a stable representation of the arguments
+    key_parts = [func_name]
+    for arg in args:
+        if isinstance(arg, (str, int, float, bool, type(None))):
+            key_parts.append(str(arg))
+        else:
+            key_parts.append(str(type(arg)))
+    
+    for k, v in sorted(kwargs.items()):
+        if isinstance(v, (str, int, float, bool, type(None))):
+            key_parts.append(f"{k}={v}")
+        else:
+            key_parts.append(f"{k}={type(v)}")
+    
+    return hashlib.sha256("|".join(key_parts).encode()).hexdigest()
+
+
+def task(func: Callable[..., T]) -> Callable[..., T]:
+    """Decorator to make a function behave like a LangGraph task.
+    
+    This ensures the function is only executed once per unique set of arguments
+    within a workflow execution, preventing repetition on resume.
+    """
+    @wraps(func)
+    async def async_wrapper(*args, **kwargs):
+        if not persistence_config.enable_task_wrapping:
+            # If task wrapping is disabled, just execute normally
+            return await func(*args, **kwargs)
+        
+        # Generate task key
+        task_key = _get_task_key(func.__name__, args, kwargs)
+        
+        # Check if already executed
+        if task_key in _executed_tasks:
+            return _executed_tasks[task_key]
+        
+        # Execute and cache result
+        result = await func(*args, **kwargs)
+        _executed_tasks[task_key] = result
+        return result
+    
+    @wraps(func)
+    def sync_wrapper(*args, **kwargs):
+        if not persistence_config.enable_task_wrapping:
+            # If task wrapping is disabled, just execute normally
+            return func(*args, **kwargs)
+        
+        # Generate task key
+        task_key = _get_task_key(func.__name__, args, kwargs)
+        
+        # Check if already executed
+        if task_key in _executed_tasks:
+            return _executed_tasks[task_key]
+        
+        # Execute and cache result
+        result = func(*args, **kwargs)
+        _executed_tasks[task_key] = result
+        return result
+    
+    if asyncio.iscoroutinefunction(func):
+        return async_wrapper
+    else:
+        return sync_wrapper
 
 
 # Task-wrapped logging functions
@@ -175,7 +249,6 @@ def generate_memory_id(user_id: str, content: str, operation: str = "memory") ->
     return generate_deterministic_id(combined, operation)
 
 
-@task
 async def get_workflow_timestamp(state: Dict[str, Any], config: Optional[RunnableConfig] = None) -> float:
     """Get or create a consistent timestamp for the workflow.
     

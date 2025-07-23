@@ -245,10 +245,9 @@ def route_after_analysis(state: Union[Dict[str, Any], Any]) -> Union[
         messages = getattr(state, "messages", [])
         analysis_result = getattr(state, "analysis_result", None)
     
-    # Use async context for logging
-    import asyncio
-    loop = asyncio.get_event_loop()
-    loop.create_task(log_debug(f"route_after_analysis: analysis_result = {analysis_result is not None}"))
+    # Use synchronous logging in routing functions (they run in executor threads)
+    if os.getenv("ENABLE_DEBUG_LOGGING", "false").lower() == "true":
+        print(f"[DEBUG] route_after_analysis: analysis_result = {analysis_result is not None}")
     
     last_message = messages[-1] if messages else None
     
@@ -258,7 +257,7 @@ def route_after_analysis(state: Union[Dict[str, Any], Any]) -> Union[
     
     # Check for cycles using advanced detection
     if cycle:
-        loop.create_task(log_info(f"[CycleDetector] Breaking {cycle.cycle_type} cycle: {' -> '.join(cycle.pattern)}"))
+        print(f"[CycleDetector] Breaking {cycle.cycle_type} cycle: {' -> '.join(cycle.pattern)}")
         return "__end__"
     
     # Fallback to simple limits
@@ -300,9 +299,7 @@ def route_after_validation(state: Union[Dict[str, Any], Any]) -> Union[
     
     # Check for validation retry cycles
     if cycle and cycle.cycle_type in [CycleType.OSCILLATION, CycleType.DEADLOCK]:
-        import asyncio
-        loop = asyncio.get_event_loop()
-        loop.create_task(log_info(f"[CycleDetector] Breaking validation {cycle.cycle_type}: {' -> '.join(cycle.pattern)}"))
+        print(f"[CycleDetector] Breaking validation {cycle.cycle_type}: {' -> '.join(cycle.pattern)}")
         return "__end__"
     
     # If invalid and interactive features are enabled, ask user
@@ -340,9 +337,7 @@ def route_after_tools(state: Union[Dict[str, Any], Any]) -> Union[
     
     # Check for tool execution cycles
     if cycle:
-        import asyncio
-        loop = asyncio.get_event_loop()
-        loop.create_task(log_info(f"[CycleDetector] Breaking tool {cycle.cycle_type}: {' -> '.join(cycle.pattern)}"))
+        print(f"[CycleDetector] Breaking tool {cycle.cycle_type}: {' -> '.join(cycle.pattern)}")
         return "__end__"
     
     # Check limits
@@ -355,9 +350,8 @@ def route_after_tools(state: Union[Dict[str, Any], Any]) -> Union[
     else:
         analysis_result = getattr(state, "analysis_result", None)
     
-    import asyncio
-    loop = asyncio.get_event_loop()
-    loop.create_task(log_debug(f"route_after_tools: analysis_result = {analysis_result is not None}"))
+    if os.getenv("ENABLE_DEBUG_LOGGING", "false").lower() == "true":
+        print(f"[DEBUG] route_after_tools: analysis_result = {analysis_result is not None}")
     
     if analysis_result:
         return "validate_analysis"
@@ -513,12 +507,6 @@ def create_enhanced_graph():
 # The improved features are still available through the enhanced nodes
 graph = create_interactive_graph()
 
-# Log initialization asynchronously
-import asyncio
-try:
-    loop = asyncio.get_event_loop()
-except RuntimeError:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-loop.create_task(log_info("Using standard interactive graph with enhanced analysis nodes"))
+# Simple synchronous logging for module initialization
+if os.getenv("ENABLE_DEBUG_LOGGING", "false").lower() == "true":
+    print("[INFO] Using standard interactive graph with enhanced analysis nodes")

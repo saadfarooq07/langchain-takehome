@@ -75,10 +75,18 @@ loghub/
 # Project specific
 demo_evaluation_results.json
 langsmith_dataset_backup*.json
+evaluation_results_consolidated_*.json
 *.bak
 *.tmp
 .langgraph/
 checkpoints/
+
+# Test archives (prevent re-accumulation)
+tests/archive/
+**/archive/
+
+# Duplicate test files in root
+/test_*.py
 
 # Node modules (for frontend)
 node_modules/

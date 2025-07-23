@@ -3,10 +3,15 @@
 import hashlib
 import json
 import time
-import uuid
 from typing import Dict, Any, List, Optional
 
 from langgraph.store.base import BaseStore
+from ..persistence_utils import (
+    generate_memory_id,
+    generate_deterministic_id,
+    get_workflow_timestamp,
+    log_debug, log_warning
+)
 
 
 class MemoryService:
@@ -30,8 +35,9 @@ class MemoryService:
         log_content: str,
         analysis_result: Dict[str, Any],
         performance_metrics: Dict[str, Any],
+        state: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Store analysis result for future reference.
+        """Store analysis result for future reference with content-based deduplication.
 
         Args:
             user_id: User identifier
@@ -39,11 +45,31 @@ class MemoryService:
             log_content: Original log content
             analysis_result: Analysis results
             performance_metrics: Performance metrics
+            state: Optional workflow state for timestamp consistency
 
         Returns:
             Memory ID of stored analysis
         """
         namespace = self._get_namespace(user_id, "analysis_history")
+
+        # Generate deterministic ID based on content
+        log_hash = self._hash_log_content(log_content)
+        analysis_hash = hashlib.sha256(
+            json.dumps(analysis_result, sort_keys=True).encode()
+        ).hexdigest()[:16]
+        
+        # Create deterministic memory ID
+        memory_id = f"{log_hash}_{analysis_hash}_{application_name}"
+        
+        # Check if already exists
+        try:
+            existing = await self.store.aget(namespace, memory_id)
+            if existing:
+                await log_debug(f"Analysis already stored with ID: {memory_id[:16]}...")
+                return memory_id
+        except Exception:
+            # Not found, continue to store
+            pass
 
         # Extract key information for searchability
         issues_summary = []
@@ -57,20 +83,26 @@ class MemoryService:
                 for issue in analysis_result["issues"]
             ]
 
+        # Use consistent timestamp from workflow state if available
+        if state:
+            timestamp = await get_workflow_timestamp(state)
+        else:
+            timestamp = time.time()
+
         memory_data = {
             "application_name": application_name,
-            "log_hash": self._hash_log_content(log_content),
+            "log_hash": log_hash,
             "log_snippet": log_content[:500],  # First 500 chars for context
             "analysis_result": analysis_result,
             "performance_metrics": performance_metrics,
-            "timestamp": time.time(),
+            "timestamp": timestamp,
             "issues_summary": issues_summary,
             "solutions_applied": analysis_result.get("suggestions", []),
             "documentation_refs": analysis_result.get("documentation_references", []),
         }
 
-        memory_id = str(uuid.uuid4())
         await self.store.aput(namespace, memory_id, memory_data)
+        await log_debug(f"Stored new analysis with ID: {memory_id[:16]}...")
         return memory_id
 
     async def search_similar_issues(
@@ -123,13 +155,15 @@ class MemoryService:
             return similar_issues
 
         except Exception as e:
-            print(f"Error searching similar issues: {e}")
+            import asyncio
+            loop = asyncio.get_event_loop()
+            loop.create_task(log_warning(f"Error searching similar issues: {e}"))
             return []
 
     async def store_application_context(
         self, user_id: str, application_name: str, context_data: Dict[str, Any]
     ) -> str:
-        """Store application-specific debugging context.
+        """Store application-specific debugging context with deduplication.
 
         Args:
             user_id: User identifier
@@ -140,6 +174,20 @@ class MemoryService:
             Memory ID of stored context
         """
         namespace = self._get_namespace(user_id, "application_context")
+        
+        # Generate deterministic ID for context
+        context_str = f"{application_name}_{json.dumps(context_data, sort_keys=True)}"
+        memory_id = generate_memory_id(user_id, context_str, "app_context")
+        
+        # Check if already exists
+        try:
+            existing = await self.store.aget(namespace, memory_id)
+            if existing:
+                await log_debug(f"Application context already stored with ID: {memory_id[:16]}...")
+                return memory_id
+        except Exception:
+            # Not found, continue to store
+            pass
 
         context_memory = {
             "application_name": application_name,

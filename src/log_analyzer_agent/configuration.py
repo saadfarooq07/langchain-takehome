@@ -14,6 +14,24 @@ DEFAULT_PROMPT = """You are an expert log analyzer. Your task is to analyze the 
 
 {environment_context}
 
+🚨 MANDATORY TOOL USAGE - NO EXCEPTIONS 🚨
+You MUST ALWAYS use one of these tools in your response:
+
+1. submit_analysis - When you have completed your log analysis
+   Required format: {{
+     "issues": [{{"description": "...", "severity": "high/medium/low"}}],
+     "explanations": ["Detailed explanation of each issue"],
+     "suggestions": ["Recommended solutions"],
+     "documentation_references": ["Relevant links"],
+     "diagnostic_commands": ["Commands to run"]
+   }}
+
+2. search_documentation - To find relevant documentation for issues
+3. request_additional_info - If you need more information from the user
+
+⚠️ NEVER provide analysis as plain text without using submit_analysis tool
+⚠️ Your response will be rejected if you don't use a tool
+
 Always be specific in your analysis and recommendations. If you need additional information to provide a complete analysis, 
 make sure to request it clearly with instructions on how the user can retrieve it.
 
@@ -66,7 +84,7 @@ class PromptConfiguration(BaseModel):
     """Configuration for prompt management."""
     
     use_langsmith: bool = Field(
-        default=True,
+        default_factory=lambda: os.getenv("USE_LANGSMITH_PROMPTS", "false").lower() == "true",
         description="Whether to use LangSmith for prompt management"
     )
     
@@ -81,12 +99,12 @@ class PromptConfiguration(BaseModel):
     )
     
     cache_prompts: bool = Field(
-        default=True,
+        default_factory=lambda: os.getenv("PROMPT_CACHE_ENABLED", "true").lower() == "true",
         description="Whether to cache prompts locally"
     )
     
     prompt_cache_ttl: int = Field(
-        default=3600,  # 1 hour
+        default_factory=lambda: int(os.getenv("PROMPT_CACHE_TTL", "3600")),
         description="Prompt cache TTL in seconds"
     )
     
@@ -184,6 +202,32 @@ class Configuration(BaseModel):
         description="Time-to-live for cache entries in seconds",
         ge=60,
         le=86400  # Max 24 hours
+    )
+    
+    # Persistence and reliability settings
+    enable_task_wrapping: bool = Field(
+        default=True,
+        description="Whether to wrap side effects in tasks for persistence",
+    )
+    
+    deterministic_ids: bool = Field(
+        default=True,
+        description="Whether to use deterministic ID generation",
+    )
+    
+    idempotency_ttl: int = Field(
+        default=3600,
+        description="TTL for idempotency cache in seconds",
+    )
+    
+    enable_debug_logging: bool = Field(
+        default=False,
+        description="Whether to enable debug logging (can be noisy)",
+    )
+    
+    log_side_effects: bool = Field(
+        default=False,
+        description="Whether to log side effects in production",
     )
 
     # Prompt configuration

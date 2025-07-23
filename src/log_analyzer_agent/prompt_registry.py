@@ -23,6 +23,10 @@ from .prompts import (
     followup_template,
     documentation_search_template,
 )
+from .persistence_utils import (
+    save_json_to_file, read_json_from_file,
+    log_debug, log_info, log_warning, log_error
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +119,7 @@ class PromptRegistry:
             self.client = client or Client()
         else:
             self.client = None
-            logger.info("LangSmith integration disabled or API key not found")
+            asyncio.create_task(log_info("LangSmith integration disabled or API key not found"))
         
         self.enable_cache = enable_cache
         self.cache_dir = cache_dir or Path.home() / ".langchain" / "prompt_cache"
@@ -136,10 +140,9 @@ class PromptRegistry:
     async def _ensure_cache_dir(self):
         """Ensure cache directory exists (async-safe)."""
         if self.enable_cache and not getattr(self, '_cache_dir_created', True):
-            import aiofiles.os
+            import asyncio
             # Check if directory exists first
-            if not await aiofiles.os.path.exists(self.cache_dir):
-                import asyncio
+            if not await asyncio.to_thread(self.cache_dir.exists):
                 await asyncio.to_thread(self.cache_dir.mkdir, parents=True, exist_ok=True)
             self._cache_dir_created = True
     
@@ -207,11 +210,11 @@ class PromptRegistry:
                     await self._save_to_cache(cache_key, prompt, config.version)
                     return prompt
             except Exception as e:
-                logger.warning(f"Failed to fetch prompt from LangSmith: {e}")
+                await log_warning(f"Failed to fetch prompt from LangSmith: {e}")
         
         # Fall back to local template
         if config.fallback_template:
-            logger.info(f"Using local fallback for prompt: {prompt_name}")
+            await log_info(f"Using local fallback for prompt: {prompt_name}")
             return config.fallback_template
         
         raise ValueError(f"Prompt not found and no fallback available: {prompt_name}")
@@ -254,12 +257,12 @@ class PromptRegistry:
             # Invalidate cache for this prompt
             await self._invalidate_cache(formatted_name)
             
-            logger.info(f"Successfully pushed prompt: {formatted_name}")
+            await log_info(f"Successfully pushed prompt: {formatted_name}")
             # Result is a string containing the commit hash/version
             return result if isinstance(result, str) else result.get("version", "unknown")
             
         except Exception as e:
-            logger.error(f"Failed to push prompt to LangSmith: {e}")
+            await log_error(f"Failed to push prompt to LangSmith: {e}")
             raise
     
     def list_prompts(self) -> Dict[str, PromptConfig]:
@@ -282,7 +285,7 @@ class PromptRegistry:
             )
             return prompt
         except Exception as e:
-            logger.error(f"Error fetching prompt {prompt_name}:{version} - {e}")
+            await log_error(f"Error fetching prompt {prompt_name}:{version} - {e}")
             return None
     
     async def _get_from_cache(self, cache_key: str, ttl: int) -> Optional[BasePromptTemplate]:
@@ -291,14 +294,13 @@ class PromptRegistry:
         if cache_key in self.memory_cache:
             entry = self.memory_cache[cache_key]
             if not entry.is_expired(ttl):
-                logger.debug(f"Using memory cached prompt: {cache_key}")
+                await log_debug(f"Using memory cached prompt: {cache_key}")
                 return entry.prompt
         
         # Check disk cache
         cache_file = self.cache_dir / f"{cache_key.replace('/', '_')}.json"
         import asyncio
-        import aiofiles.os
-        if await aiofiles.os.path.exists(cache_file):
+        if await asyncio.to_thread(cache_file.exists):
             try:
                 data = await self._read_cache_file_async(cache_file)
                 entry = PromptCacheEntry(
@@ -307,20 +309,18 @@ class PromptRegistry:
                     version=data["version"]
                 )
                 if not entry.is_expired(ttl):
-                    logger.debug(f"Using disk cached prompt: {cache_key}")
+                    await log_debug(f"Using disk cached prompt: {cache_key}")
                     self.memory_cache[cache_key] = entry
                     return entry.prompt
             except Exception as e:
-                logger.warning(f"Failed to load cached prompt: {e}")
+                await log_warning(f"Failed to load cached prompt: {e}")
         
         return None
     
     async def _read_cache_file_async(self, cache_file):
         """Helper method to read cache file asynchronously."""
-        import aiofiles
-        async with aiofiles.open(cache_file, 'r') as f:
-            content = await f.read()
-            return json.loads(content)
+        import asyncio
+        return await read_json_from_file(cache_file)
     
     async def _save_to_cache(
         self,
@@ -351,13 +351,12 @@ class PromptRegistry:
                 "version": version
             })
         except Exception as e:
-            logger.warning(f"Failed to save prompt to disk cache: {e}")
+            await log_warning(f"Failed to save prompt to disk cache: {e}")
     
     async def _write_cache_file_async(self, cache_file, data):
         """Helper method to write cache file asynchronously."""
-        import aiofiles
-        async with aiofiles.open(cache_file, 'w') as f:
-            await f.write(json.dumps(data, indent=2))
+        import asyncio
+        await save_json_to_file(cache_file, data)
     
     async def _invalidate_cache(self, prompt_name: str) -> None:
         """Invalidate all cached versions of a prompt."""
@@ -368,14 +367,13 @@ class PromptRegistry:
         
         # Remove from disk cache
         import asyncio
-        import aiofiles.os
         pattern = f"{prompt_name.replace('/', '_')}*.json"
         cache_files = await asyncio.to_thread(list, self.cache_dir.glob(pattern))
         for cache_file in cache_files:
             try:
-                await aiofiles.os.remove(str(cache_file))
+                await asyncio.to_thread(cache_file.unlink)
             except Exception as e:
-                logger.warning(f"Failed to remove cache file: {e}")
+                await log_warning(f"Failed to remove cache file: {e}")
 
 
 # Singleton instance

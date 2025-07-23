@@ -15,6 +15,10 @@ try:
 except ImportError:
     pass
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 from typing import Dict, Any, Set, Optional, Literal, Union
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -32,6 +36,10 @@ from .nodes.user_input import handle_user_input as _handle_user_input_impl
 from .tools import search_documentation, request_additional_info, submit_analysis
 from .utils import count_node_visits, count_tool_calls
 from .cycle_detector import CycleDetector, CycleType
+from .persistence_utils import (
+    log_debug, log_info, log_warning, log_error,
+    get_workflow_timestamp, generate_deterministic_id
+)
 
 
 # Simple in-memory cache for repeated analyses
@@ -39,7 +47,7 @@ _analysis_cache: Dict[str, Dict[str, Any]] = {}
 CACHE_TTL_SECONDS = 300  # 5 minutes
 
 
-def initialize_state(state: Dict[str, Any]) -> Dict[str, Any]:
+async def initialize_state(state: Dict[str, Any]) -> Dict[str, Any]:
     """Initialize state with default values for missing fields.
     
     This ensures all internal fields have proper defaults even when
@@ -57,7 +65,8 @@ def initialize_state(state: Dict[str, Any]) -> Dict[str, Any]:
     if "token_count" not in state:
         state["token_count"] = 0
     if "start_time" not in state:
-        state["start_time"] = time.time()
+        # Use deterministic timestamp for the workflow
+        state["start_time"] = await get_workflow_timestamp(state)
     
     # Initialize metadata
     if "log_metadata" not in state:
@@ -85,7 +94,7 @@ _cycle_detector = CycleDetector(
 async def analyze_logs(state: Dict[str, Any], *, config: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
     """Wrapper for analyze_logs that handles dict state."""
     # Initialize state with defaults
-    state = initialize_state(state)
+    state = await initialize_state(state)
     
     # Create a minimal CoreWorkingState for the implementation
     from langchain_core.messages import HumanMessage
@@ -115,7 +124,7 @@ async def analyze_logs(state: Dict[str, Any], *, config: Optional[Dict[str, Any]
 async def validate_analysis(state: Dict[str, Any], *, config: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
     """Wrapper for validate_analysis that handles dict state."""
     # Initialize state with defaults
-    state = initialize_state(state)
+    state = await initialize_state(state)
     
     # Create a minimal state for the implementation
     working_state = CoreWorkingState(
@@ -141,7 +150,7 @@ async def validate_analysis(state: Dict[str, Any], *, config: Optional[Dict[str,
 async def handle_user_input(state: Dict[str, Any], *, config: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
     """Wrapper for handle_user_input that handles dict state."""
     # Initialize state with defaults  
-    state = initialize_state(state)
+    state = await initialize_state(state)
     
     # Create an InteractiveWorkingState for the implementation
     working_state = InteractiveWorkingState(
@@ -171,33 +180,36 @@ async def handle_user_input(state: Dict[str, Any], *, config: Optional[Dict[str,
 def cache_analysis(func):
     """Simple caching decorator for analysis results."""
     @functools.wraps(func)
-    def wrapper(state: Dict[str, Any]) -> Dict[str, Any]:
+    async def wrapper(state: Dict[str, Any]) -> Dict[str, Any]:
         # Ensure state is initialized
-        state = initialize_state(state)
+        state = await initialize_state(state)
         
-        # Create cache key from log content hash
-        import hashlib
+        # Create deterministic cache key
         log_content = state.get("log_content", "")
-        cache_key = hashlib.md5(log_content.encode()).hexdigest()
+        cache_key = generate_deterministic_id(log_content, "cache")
         
         # Check cache
         if cache_key in _analysis_cache:
             cached = _analysis_cache[cache_key]
-            if time.time() - cached["timestamp"] < CACHE_TTL_SECONDS:
+            workflow_time = await get_workflow_timestamp(state)
+            if workflow_time - cached["timestamp"] < CACHE_TTL_SECONDS:
+                await log_debug(f"Retrieved analysis from cache (key: {cache_key[:8]}...)")
                 return {
                     "analysis_result": cached["result"],
                     "messages": [HumanMessage(content="Retrieved from cache")]
                 }
         
         # Run analysis
-        result = func(state)
+        result = await func(state)
         
         # Cache result if successful
         if result.get("analysis_result"):
+            workflow_time = await get_workflow_timestamp(state)
             _analysis_cache[cache_key] = {
                 "result": result["analysis_result"],
-                "timestamp": time.time()
+                "timestamp": workflow_time
             }
+            await log_debug(f"Cached analysis result (key: {cache_key[:8]}...)")
         
         return result
     
@@ -232,6 +244,12 @@ def route_after_analysis(state: Union[Dict[str, Any], Any]) -> Union[
     else:
         messages = getattr(state, "messages", [])
         analysis_result = getattr(state, "analysis_result", None)
+    
+    # Use async context for logging
+    import asyncio
+    loop = asyncio.get_event_loop()
+    loop.create_task(log_debug(f"route_after_analysis: analysis_result = {analysis_result is not None}"))
+    
     last_message = messages[-1] if messages else None
     
     # Add transition to cycle detector
@@ -240,7 +258,7 @@ def route_after_analysis(state: Union[Dict[str, Any], Any]) -> Union[
     
     # Check for cycles using advanced detection
     if cycle:
-        print(f"[CycleDetector] Breaking {cycle.cycle_type} cycle: {' -> '.join(cycle.pattern)}")
+        loop.create_task(log_info(f"[CycleDetector] Breaking {cycle.cycle_type} cycle: {' -> '.join(cycle.pattern)}"))
         return "__end__"
     
     # Fallback to simple limits
@@ -282,7 +300,9 @@ def route_after_validation(state: Union[Dict[str, Any], Any]) -> Union[
     
     # Check for validation retry cycles
     if cycle and cycle.cycle_type in [CycleType.OSCILLATION, CycleType.DEADLOCK]:
-        print(f"[CycleDetector] Breaking validation {cycle.cycle_type}: {' -> '.join(cycle.pattern)}")
+        import asyncio
+        loop = asyncio.get_event_loop()
+        loop.create_task(log_info(f"[CycleDetector] Breaking validation {cycle.cycle_type}: {' -> '.join(cycle.pattern)}"))
         return "__end__"
     
     # If invalid and interactive features are enabled, ask user
@@ -320,7 +340,9 @@ def route_after_tools(state: Union[Dict[str, Any], Any]) -> Union[
     
     # Check for tool execution cycles
     if cycle:
-        print(f"[CycleDetector] Breaking tool {cycle.cycle_type}: {' -> '.join(cycle.pattern)}")
+        import asyncio
+        loop = asyncio.get_event_loop()
+        loop.create_task(log_info(f"[CycleDetector] Breaking tool {cycle.cycle_type}: {' -> '.join(cycle.pattern)}"))
         return "__end__"
     
     # Check limits
@@ -332,6 +354,10 @@ def route_after_tools(state: Union[Dict[str, Any], Any]) -> Union[
         analysis_result = state.get("analysis_result")
     else:
         analysis_result = getattr(state, "analysis_result", None)
+    
+    import asyncio
+    loop = asyncio.get_event_loop()
+    loop.create_task(log_debug(f"route_after_tools: analysis_result = {analysis_result is not None}"))
     
     if analysis_result:
         return "validate_analysis"
@@ -486,4 +512,13 @@ def create_enhanced_graph():
 # For now, use the standard graph to avoid import issues
 # The improved features are still available through the enhanced nodes
 graph = create_interactive_graph()
-print("Using standard interactive graph with enhanced analysis nodes")
+
+# Log initialization asynchronously
+import asyncio
+try:
+    loop = asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+loop.create_task(log_info("Using standard interactive graph with enhanced analysis nodes"))

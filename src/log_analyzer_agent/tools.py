@@ -6,7 +6,7 @@ requesting additional information, and providing analysis results.
 """
 
 import json
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Union, cast
 
 import aiohttp
 from langchain_tavily import TavilySearch
@@ -21,6 +21,13 @@ from .cache_utils.cache import get_cache
 
 # Import init_model directly from utils.py to avoid circular imports
 from .utils import init_model
+
+# Import persistence utilities
+from .persistence_utils import (
+    log_debug, log_warning, log_error,
+    idempotent, generate_idempotency_key,
+    idempotent_operation
+)
 
 
 class CommandSuggestionEngine:
@@ -169,6 +176,7 @@ class CommandSuggestionEngine:
         return unique_suggestions
 
 
+@tool
 async def search_documentation(
     query: str, *, config: Annotated[RunnableConfig, InjectedToolArg]
 ) -> Optional[List[Dict[str, Any]]]:
@@ -184,30 +192,50 @@ async def search_documentation(
         A list of relevant documentation sources with titles, snippets, and URLs
     """
     configuration = Configuration.from_runnable_config(config)
-    wrapped = TavilySearch(max_results=configuration.max_search_results)
+    
+    # Make the search idempotent
+    async def _perform_search():
+        wrapped = TavilySearch(max_results=configuration.max_search_results)
+        
+        try:
+            result = await wrapped.ainvoke({"query": query})
+            # Extract results from the response
+            if isinstance(result, dict):
+                result = result.get("results", [])
+            elif isinstance(result, list):
+                # Sometimes TavilySearch returns results directly
+                pass
+            else:
+                # Unexpected format
+                return []
 
-    try:
-        result = await wrapped.ainvoke({"query": query})
-        # Extract results from the response
-        result = result.get("results", [])
+            # Enhance results with evidence tracking
+            enhanced_results = []
+            for item in cast(List[Dict[str, Any]], result):
+                enhanced_item = {
+                    "title": item.get("title", ""),
+                    "url": item.get("url", ""),
+                    "snippet": item.get("snippet", ""),
+                    "evidence_type": "documentation",
+                    "relevance_score": item.get("score", 0.0),
+                    "source_type": _categorize_source(item.get("url", "")),
+                }
+                enhanced_results.append(enhanced_item)
 
-        # Enhance results with evidence tracking
-        enhanced_results = []
-        for item in cast(List[Dict[str, Any]], result):
-            enhanced_item = {
-                "title": item.get("title", ""),
-                "url": item.get("url", ""),
-                "snippet": item.get("snippet", ""),
-                "evidence_type": "documentation",
-                "relevance_score": item.get("score", 0.0),
-                "source_type": _categorize_source(item.get("url", "")),
-            }
-            enhanced_results.append(enhanced_item)
-
-        return enhanced_results
-    except Exception as e:
-        # Return empty list on error rather than failing
-        return []
+            return enhanced_results
+        except Exception as e:
+            # Log the error for debugging but don't fail the analysis
+            await log_warning(f"Documentation search failed: {e}")
+            return []
+    
+    # Execute with idempotency
+    return await idempotent_operation(
+        "search_documentation",
+        _perform_search,
+        query,
+        max_results=configuration.max_search_results,
+        cache_result=True
+    )
 
 
 def _categorize_source(url: str) -> str:
@@ -254,14 +282,14 @@ async def request_additional_info(
 
 @tool
 async def submit_analysis(
-    analysis: Dict[str, Any],
+    analysis: Union[Dict[str, Any], str],
     *,
     state: Annotated[State, InjectedState],
 ) -> str:
     """Submit the final analysis of the log content.
 
     Args:
-        analysis: A dictionary containing:
+        analysis: A dictionary or JSON string containing:
             - "issues": List of identified issues, each with description and severity
             - "explanations": Detailed explanations of what each issue means
             - "suggestions": Recommended solutions or next steps for each issue
@@ -271,6 +299,18 @@ async def submit_analysis(
     Returns:
         A confirmation that the analysis was submitted
     """
+    import json
+    
+    # Handle case where analysis is passed as JSON string
+    if isinstance(analysis, str):
+        try:
+            analysis = json.loads(analysis)
+        except json.JSONDecodeError as e:
+            return f"Error: Invalid JSON format in analysis: {e}"
+    
+    # Ensure analysis is a dictionary
+    if not isinstance(analysis, dict):
+        return "Error: Analysis must be a dictionary or valid JSON string"
     # Generate command suggestions if not already included
     if "diagnostic_commands" not in analysis:
         engine = CommandSuggestionEngine()
@@ -281,7 +321,13 @@ async def submit_analysis(
             environment_info=environment_info, issues=analysis.get("issues", [])
         )
 
+    # Use async logging
+    import asyncio
+    loop = asyncio.get_event_loop()
+    loop.create_task(log_debug(f"submit_analysis called with analysis keys: {list(analysis.keys()) if isinstance(analysis, dict) else 'not a dict'}"))
+    loop.create_task(log_debug(f"Setting state.analysis_result"))
     state.analysis_result = analysis
+    loop.create_task(log_debug(f"State.analysis_result set to: {state.analysis_result is not None}"))
     
     # Cache the analysis result if enabled
     from langchain_core.runnables import RunnableConfig

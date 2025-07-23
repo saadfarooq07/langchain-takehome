@@ -7,9 +7,9 @@ from typing import List
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 from src.log_analyzer_agent.state import (
-    CoreState,
-    InteractiveState,
-    MemoryState,
+    CoreWorkingState,
+    InteractiveWorkingState,
+    MemoryWorkingState,
     create_state_class
 )
 from src.log_analyzer_agent.state_compat import _get_state_features as get_state_features
@@ -19,32 +19,32 @@ class TestCoreState:
     """Test the basic CoreState functionality."""
     
     def test_core_state_initialization(self):
-        """Test that CoreState can be initialized with minimal fields."""
-        state = CoreState(
+        """Test that CoreWorkingState can be initialized with minimal fields."""
+        state = CoreWorkingState(
             messages=[],
             log_content="test log"
         )
         assert state.messages == []
         assert state.log_content == "test log"
-        assert hasattr(state, '_message_count')
         assert state.analysis_result is None
-        assert state.needs_user_input is False
+        assert state.token_count == 0
+        assert state.node_visits == {}
     
     def test_core_state_with_messages(self):
-        """Test CoreState with messages."""
+        """Test CoreWorkingState with messages."""
         messages = [
             HumanMessage(content="Analyze this log"),
             AIMessage(content="I'll analyze it")
         ]
-        state = CoreState(
+        state = CoreWorkingState(
             messages=messages,
             log_content="error log"
         )
         assert len(state.messages) == 2
     
     def test_core_state_fields(self):
-        """Test CoreState has expected fields."""
-        state = CoreState(
+        """Test CoreWorkingState has expected fields."""
+        state = CoreWorkingState(
             messages=[HumanMessage(content="test")],
             log_content="log"
         )
@@ -52,15 +52,16 @@ class TestCoreState:
         assert hasattr(state, 'messages')
         assert hasattr(state, 'log_content')
         assert hasattr(state, 'analysis_result')
-        assert hasattr(state, 'needs_user_input')
+        assert hasattr(state, 'node_visits')
+        assert hasattr(state, 'tool_calls')
 
 
 class TestInteractiveState:
     """Test the InteractiveState with user interaction features."""
     
     def test_interactive_state_extends_core(self):
-        """Test that InteractiveState has all CoreState fields."""
-        state = InteractiveState(
+        """Test that InteractiveWorkingState has all CoreWorkingState fields."""
+        state = InteractiveWorkingState(
             messages=[],
             log_content="test"
         )
@@ -70,77 +71,71 @@ class TestInteractiveState:
         assert hasattr(state, "analysis_result")
         
         # Should have interactive fields
-        assert state.user_response is None
-        assert state.pending_request is None
-        assert state.additional_context is None
-        assert state.follow_up_requests == []
+        assert state.user_input is None
+        assert state.pending_questions is None
+        assert state.interaction_history == []
     
     def test_interactive_state_with_user_response(self):
         """Test setting user response."""
-        state = InteractiveState(
+        state = InteractiveWorkingState(
             messages=[],
             log_content="test",
-            user_response="Additional info: running on AWS",
-            pending_request={"question": "What cloud provider?"}
+            user_input="Additional info: running on AWS",
+            user_interaction_required=True
         )
-        assert state.user_response == "Additional info: running on AWS"
-        assert state.pending_request["question"] == "What cloud provider?"
+        assert state.user_input == "Additional info: running on AWS"
+        assert state.user_interaction_required is True
 
 
 class TestMemoryState:
     """Test the full MemoryState with all features."""
     
     def test_memory_state_initialization(self):
-        """Test MemoryState with full feature set."""
-        state = MemoryState(
+        """Test MemoryWorkingState with full feature set."""
+        state = MemoryWorkingState(
             messages=[],
             log_content="test",
             thread_id="thread-123",
-            user_id="user-456",
             session_id="session-789"
         )
         # Should have all parent fields
         assert hasattr(state, "messages")
-        assert hasattr(state, "user_response")
+        assert hasattr(state, "user_input")
         
         # Should have memory fields
         assert state.thread_id == "thread-123"
-        assert state.user_id == "user-456"
         assert state.session_id == "session-789"
         
         # Should have default values
-        assert state.application_name == "Unknown"
-        assert state.environment_type == "Unknown"
-        assert state.similar_issues == []
-        assert state.memory_search_count == 0
+        assert state.memory_matches is None
+        assert state.application_context is None
+        assert state.save_count == 0
     
     def test_memory_state_with_context(self):
-        """Test MemoryState with retrieved context."""
-        state = MemoryState(
+        """Test MemoryWorkingState with retrieved context."""
+        state = MemoryWorkingState(
             messages=[],
             log_content="test",
-            similar_issues=[
+            memory_matches=[
                 {"issue": "Database timeout", "solution": "Increase pool size"}
             ],
-            previous_solutions=["Restart service", "Check network"],
-            user_preferences={"detail_level": "verbose"}
+            application_context={"detail_level": "verbose"}
         )
-        assert len(state.similar_issues) == 1
-        assert state.similar_issues[0]["issue"] == "Database timeout"
-        assert len(state.previous_solutions) == 2
-        assert state.user_preferences["detail_level"] == "verbose"
+        assert len(state.memory_matches) == 1
+        assert state.memory_matches[0]["issue"] == "Database timeout"
+        assert state.application_context["detail_level"] == "verbose"
     
     def test_memory_state_performance_tracking(self):
         """Test performance metric fields."""
         start = datetime.now()
-        state = MemoryState(
+        state = MemoryWorkingState(
             messages=[],
             log_content="test",
-            start_time=start,
-            memory_search_count=5
+            last_saved=start,
+            save_count=5
         )
-        assert state.start_time == start
-        assert state.memory_search_count == 5
+        assert state.last_saved == start
+        assert state.save_count == 5
 
 
 class TestStateFeatures:
@@ -161,17 +156,17 @@ class TestStateFeatures:
         state = {
             "messages": [],
             "log_content": "test",
-            "user_response": "test response"
+            "user_interaction_required": True
         }
         features = get_state_features(state)
-        assert "interactivity" in features
+        assert "interactive" in features
     
     def test_get_state_features_memory(self):
         """Test feature detection for memory state."""
         state = {
             "messages": [],
             "log_content": "test",
-            "thread_id": "test-thread"
+            "memory_matches": [{"test": "match"}]
         }
         features = get_state_features(state)
         assert "memory" in features
@@ -181,27 +176,27 @@ class TestStateFactory:
     """Test the state factory function."""
     
     def test_create_minimal_state(self):
-        """Test creating minimal CoreState."""
+        """Test creating minimal CoreWorkingState."""
         state_class = create_state_class(None)
-        assert state_class == CoreState
+        assert state_class == CoreWorkingState
         
         state_class = create_state_class(set())
-        assert state_class == CoreState
+        assert state_class == CoreWorkingState
     
     def test_create_interactive_state(self):
-        """Test creating InteractiveState."""
-        state_class = create_state_class({"interactivity"})
-        assert state_class == InteractiveState
+        """Test creating InteractiveWorkingState."""
+        state_class = create_state_class({"interactive"})
+        assert state_class == InteractiveWorkingState
     
     def test_create_memory_state(self):
-        """Test creating MemoryState."""
+        """Test creating MemoryWorkingState."""
         state_class = create_state_class({"memory"})
-        assert state_class == MemoryState
+        assert state_class == MemoryWorkingState
     
     def test_memory_state_with_multiple_features(self):
         """Test that memory state is created with multiple features."""
-        state_class = create_state_class({"memory", "interactivity"})
-        assert state_class == MemoryState
+        state_class = create_state_class({"memory", "interactive"})
+        assert state_class == MemoryWorkingState
 
 
 if __name__ == "__main__":

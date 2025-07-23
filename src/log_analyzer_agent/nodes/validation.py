@@ -12,6 +12,7 @@ from ..model_pool import pooled_model
 from ..configuration import Configuration
 from ..prompt_registry import get_prompt_registry
 from .. import prompts
+from ..persistence_utils import log_debug
 
 
 class AnalysisQualityCheck(BaseModel):
@@ -32,13 +33,18 @@ async def validate_analysis(
     Uses the orchestrator model to check if the analysis is ready
     to be presented to the user.
     """
-    if not getattr(state, "analysis_result", None):
+    analysis_result = getattr(state, "analysis_result", None)
+    await log_debug(f"validate_analysis: analysis_result = {analysis_result is not None}")
+    
+    if not analysis_result:
+        await log_debug("Analysis result is None, returning invalid status")
         return {
             "messages": [
                 HumanMessage(
                     content="Analysis is not complete. Please continue analyzing."
                 )
-            ]
+            ],
+            "validation_status": "invalid"
         }
 
     last_message = state.messages[-1]

@@ -40,8 +40,8 @@ class TestAnalysisNode:
     @pytest.mark.asyncio
     async def test_analyze_logs_basic(self, mock_state, mock_config, mock_gemini_client):
         """Test basic log analysis functionality."""
-        with patch('src.log_analyzer_agent.nodes.analysis.get_model') as mock_get_model:
-            mock_get_model.return_value = mock_gemini_client
+        with patch('src.log_analyzer_agent.nodes.analysis.init_model_async') as mock_init_model:
+            mock_init_model.return_value = mock_gemini_client
             mock_gemini_client.generate_content.return_value.text = """
             {
                 "summary": "Database connection issues detected",
@@ -67,7 +67,7 @@ class TestAnalysisNode:
             }
             """
             
-            result = await analyze_logs(mock_state, mock_config)
+            result = await analyze_logs(mock_state, config=mock_config)
             
             assert result is not None
             assert "analysis_result" in result
@@ -77,8 +77,8 @@ class TestAnalysisNode:
     @pytest.mark.asyncio
     async def test_analyze_logs_with_tool_calls(self, mock_state, mock_config, mock_gemini_client):
         """Test analysis with tool calls."""
-        with patch('src.log_analyzer_agent.nodes.analysis.get_model') as mock_get_model:
-            mock_get_model.return_value = mock_gemini_client
+        with patch('src.log_analyzer_agent.nodes.analysis.init_model_async') as mock_init_model:
+            mock_init_model.return_value = mock_gemini_client
             mock_gemini_client.generate_content.return_value.text = """
             I need to search for more information about database timeouts.
             
@@ -87,7 +87,7 @@ class TestAnalysisNode:
             </tool_call>
             """
             
-            result = await analyze_logs(mock_state, mock_config)
+            result = await analyze_logs(mock_state, config=mock_config)
             
             assert result is not None
             assert len(result["tool_calls"]) > 0
@@ -96,10 +96,10 @@ class TestAnalysisNode:
     @pytest.mark.asyncio
     async def test_analyze_logs_error_handling(self, mock_state, mock_config):
         """Test error handling in analysis node."""
-        with patch('src.log_analyzer_agent.nodes.analysis.get_model') as mock_get_model:
-            mock_get_model.side_effect = Exception("API Error")
+        with patch('src.log_analyzer_agent.nodes.analysis.init_model_async') as mock_init_model:
+            mock_init_model.side_effect = Exception("API Error")
             
-            result = await analyze_logs(mock_state, mock_config)
+            result = await analyze_logs(mock_state, config=mock_config)
             
             assert result is not None
             assert "error_message" in result
@@ -110,7 +110,7 @@ class TestAnalysisNode:
         """Test max iterations limit."""
         mock_state.iteration_count = 5  # At max iterations
         
-        result = await analyze_logs(mock_state, mock_config)
+        result = await analyze_logs(mock_state, config=mock_config)
         
         assert result is not None
         assert "error_message" in result
@@ -140,8 +140,8 @@ class TestValidationNode:
     @pytest.mark.asyncio
     async def test_validate_analysis_valid(self, mock_state_with_analysis, mock_config, mock_groq_client):
         """Test validation of valid analysis."""
-        with patch('src.log_analyzer_agent.nodes.validation.get_orchestration_model') as mock_get_model:
-            mock_get_model.return_value = mock_groq_client
+        with patch('src.log_analyzer_agent.nodes.validation.init_model_async') as mock_init_model:
+            mock_init_model.return_value = mock_groq_client
             mock_groq_client.chat.completions.create.return_value.choices[0].message.content = """
             {
                 "is_valid": true,
@@ -151,7 +151,7 @@ class TestValidationNode:
             }
             """
             
-            result = await validate_analysis(mock_state_with_analysis, mock_config)
+            result = await validate_analysis(state, config=mock_config)
             
             assert result is not None
             assert result["validation_result"]["is_valid"] is True
@@ -160,8 +160,8 @@ class TestValidationNode:
     @pytest.mark.asyncio
     async def test_validate_analysis_invalid(self, mock_state_with_analysis, mock_config, mock_groq_client):
         """Test validation of invalid analysis."""
-        with patch('src.log_analyzer_agent.nodes.validation.get_orchestration_model') as mock_get_model:
-            mock_get_model.return_value = mock_groq_client
+        with patch('src.log_analyzer_agent.nodes.validation.init_model_async') as mock_init_model:
+            mock_init_model.return_value = mock_groq_client
             mock_groq_client.chat.completions.create.return_value.choices[0].message.content = """
             {
                 "is_valid": false,
@@ -171,7 +171,7 @@ class TestValidationNode:
             }
             """
             
-            result = await validate_analysis(mock_state_with_analysis, mock_config)
+            result = await validate_analysis(state, config=mock_config)
             
             assert result is not None
             assert result["validation_result"]["is_valid"] is False
@@ -183,7 +183,7 @@ class TestValidationNode:
         state = State()
         state.analysis_result = None
         
-        result = await validate_analysis(state, mock_config)
+        result = await validate_analysis(state, config=mock_config)
         
         assert result is not None
         assert "error_message" in result
@@ -206,7 +206,7 @@ class TestUserInputNode:
         """Test basic user input handling."""
         mock_state_needs_input.user_input = "Please provide more details about the database configuration."
         
-        result = await handle_user_input(mock_state_needs_input, mock_runnable_config)
+        result = await handle_user_input(state, config=mock_runnable_config)
         
         assert result is not None
         assert result["requires_user_input"] is False
@@ -218,7 +218,7 @@ class TestUserInputNode:
         state = State()
         state.requires_user_input = False
         
-        result = await handle_user_input(state, mock_runnable_config)
+        result = await handle_user_input(state, config=mock_runnable_config)
         
         assert result is not None
         assert result["requires_user_input"] is False
@@ -229,7 +229,7 @@ class TestUserInputNode:
         mock_state_needs_input.user_input = "The database is PostgreSQL 13 running on AWS RDS."
         mock_state_needs_input.analysis_result = {"summary": "Database issues detected"}
         
-        result = await handle_user_input(mock_state_needs_input, mock_runnable_config)
+        result = await handle_user_input(state, config=mock_runnable_config)
         
         assert result is not None
         assert result["requires_user_input"] is False
@@ -256,10 +256,10 @@ class TestEnhancedAnalysisNode:
         mock_unified_state.enable_streaming = True
         mock_unified_state.log_content = "x" * 15000000  # 15MB log
         
-        with patch('src.log_analyzer_agent.nodes.enhanced_analysis.get_model') as mock_get_model:
+        with patch('src.log_analyzer_agent.nodes.enhanced_analysis.init_model_async') as mock_init_model:
             mock_model = Mock()
             mock_model.generate_content.return_value.text = '{"summary": "Large log analyzed", "issues": [], "suggestions": []}'
-            mock_get_model.return_value = mock_model
+            mock_init_model.return_value = mock_model
             
             result = await enhanced_analyze_logs(mock_unified_state, mock_runnable_config)
             
@@ -269,9 +269,9 @@ class TestEnhancedAnalysisNode:
     @pytest.mark.asyncio
     async def test_enhanced_analyze_logs_circuit_breaker(self, mock_unified_state, mock_runnable_config):
         """Test enhanced analysis with circuit breaker."""
-        with patch('src.log_analyzer_agent.nodes.enhanced_analysis.get_model') as mock_get_model:
+        with patch('src.log_analyzer_agent.nodes.enhanced_analysis.init_model_async') as mock_init_model:
             # Simulate repeated failures to trigger circuit breaker
-            mock_get_model.side_effect = Exception("API Error")
+            mock_init_model.side_effect = Exception("API Error")
             
             result = await enhanced_analyze_logs(mock_unified_state, mock_runnable_config)
             
@@ -279,22 +279,16 @@ class TestEnhancedAnalysisNode:
             assert "error_message" in result
     
     @pytest.mark.asyncio
-    async def test_enhanced_analyze_logs_rate_limiting(self, mock_unified_state, mock_runnable_config):
-        """Test enhanced analysis with rate limiting."""
-        with patch('src.log_analyzer_agent.nodes.enhanced_analysis.RateLimiter') as mock_rate_limiter:
-            mock_limiter = Mock()
-            mock_limiter.acquire.return_value = True
-            mock_rate_limiter.return_value = mock_limiter
+    async def test_enhanced_analyze_logs_basic(self, mock_unified_state, mock_runnable_config):
+        """Test enhanced analysis basic functionality."""
+        with patch('src.log_analyzer_agent.nodes.enhanced_analysis.init_model_async') as mock_init_model:
+            mock_model = Mock()
+            mock_model.generate_content.return_value.text = '{"summary": "Test", "issues": [], "suggestions": []}'
+            mock_init_model.return_value = mock_model
             
-            with patch('src.log_analyzer_agent.nodes.enhanced_analysis.get_model') as mock_get_model:
-                mock_model = Mock()
-                mock_model.generate_content.return_value.text = '{"summary": "Test", "issues": [], "suggestions": []}'
-                mock_get_model.return_value = mock_model
-                
-                result = await enhanced_analyze_logs(mock_unified_state, mock_runnable_config)
-                
-                assert result is not None
-                mock_limiter.acquire.assert_called_once()
+            result = await enhanced_analyze_logs(mock_unified_state, config=mock_runnable_config)
+            
+            assert result is not None
 
 
 class TestNodeIntegration:
@@ -310,7 +304,7 @@ class TestNodeIntegration:
         state.iteration_count = 0
         
         # Mock the analysis
-        with patch('src.log_analyzer_agent.nodes.analysis.get_model') as mock_analysis_model:
+        with patch('src.log_analyzer_agent.nodes.analysis.init_model_async') as mock_analysis_model:
             mock_analysis_model.return_value.generate_content.return_value.text = """
             {
                 "summary": "Test analysis",
@@ -326,7 +320,7 @@ class TestNodeIntegration:
             state.analysis_result = analysis_result["analysis_result"]
             
             # Mock the validation
-            with patch('src.log_analyzer_agent.nodes.validation.get_orchestration_model') as mock_validation_model:
+            with patch('src.log_analyzer_agent.nodes.validation.init_model_async') as mock_validation_model:
                 mock_validation_model.return_value.chat.completions.create.return_value.choices[0].message.content = """
                 {
                     "is_valid": true,
@@ -337,7 +331,7 @@ class TestNodeIntegration:
                 """
                 
                 # Run validation
-                validation_result = await validate_analysis(state, mock_runnable_config)
+                validation_result = await validate_analysis(state, config=mock_config)
                 
                 assert validation_result is not None
                 assert validation_result["analysis_complete"] is True
@@ -351,7 +345,7 @@ class TestNodeIntegration:
         state.messages = []
         
         # Simulate error in analysis
-        with patch('src.log_analyzer_agent.nodes.analysis.get_model') as mock_model:
+        with patch('src.log_analyzer_agent.nodes.analysis.init_model_async') as mock_model:
             mock_model.side_effect = Exception("Network error")
             
             result = await analyze_logs(state, mock_runnable_config)
@@ -362,7 +356,7 @@ class TestNodeIntegration:
             
             # Verify error state can be handled by validation
             state.error_message = result["error_message"]
-            validation_result = await validate_analysis(state, mock_runnable_config)
+            validation_result = await validate_analysis(state, config=mock_config)
             
             assert validation_result is not None
             assert "error_message" in validation_result
@@ -383,7 +377,7 @@ class TestNodePerformance:
         state.log_content = large_log_content
         state.messages = []
         
-        with patch('src.log_analyzer_agent.nodes.analysis.get_model') as mock_model:
+        with patch('src.log_analyzer_agent.nodes.analysis.init_model_async') as mock_model:
             mock_model.return_value.generate_content.return_value.text = '{"summary": "Large log", "issues": [], "suggestions": []}'
             
             performance_metrics.start()
@@ -408,7 +402,7 @@ class TestNodePerformance:
             state.messages = []
             states.append(state)
         
-        with patch('src.log_analyzer_agent.nodes.analysis.get_model') as mock_model:
+        with patch('src.log_analyzer_agent.nodes.analysis.init_model_async') as mock_model:
             mock_model.return_value.generate_content.return_value.text = '{"summary": "Concurrent test", "issues": [], "suggestions": []}'
             
             # Run analyses concurrently

@@ -10,7 +10,7 @@ from src.log_analyzer_agent.tools import (
     submit_analysis,
     _categorize_source
 )
-from src.log_analyzer_agent.state import CoreState
+from src.log_analyzer_agent.state import CoreWorkingState
 
 
 class TestCommandSuggestionEngine:
@@ -256,11 +256,9 @@ class TestRequestAdditionalInfo:
     @pytest.mark.asyncio
     async def test_request_info_sets_flag(self):
         """Test that requesting info sets the needs_user_input flag."""
-        state = CoreState(
+        state = CoreWorkingState(
             messages=[],
-            log_content="test",
-            message_count=0,
-            needs_user_input=False
+            log_content="test"
         )
         
         request = {
@@ -279,7 +277,7 @@ class TestRequestAdditionalInfo:
     @pytest.mark.asyncio
     async def test_request_info_formats_response(self):
         """Test response formatting."""
-        state = CoreState(messages=[], log_content="test", message_count=0)
+        state = CoreWorkingState(messages=[], log_content="test", message_count=0)
         
         request = {
             "question": "Test question",
@@ -298,7 +296,7 @@ class TestSubmitAnalysis:
     @pytest.mark.asyncio
     async def test_submit_basic_analysis(self):
         """Test submitting basic analysis."""
-        state = CoreState(
+        state = CoreWorkingState(
             messages=[],
             log_content="test",
             message_count=0
@@ -321,7 +319,7 @@ class TestSubmitAnalysis:
     @pytest.mark.asyncio
     async def test_submit_analysis_generates_commands(self):
         """Test that submit_analysis generates diagnostic commands if missing."""
-        state = CoreState(
+        state = CoreWorkingState(
             messages=[],
             log_content="test",
             message_count=0
@@ -346,7 +344,7 @@ class TestSubmitAnalysis:
     @pytest.mark.asyncio
     async def test_submit_analysis_preserves_existing_commands(self):
         """Test that existing diagnostic commands are preserved."""
-        state = CoreState(
+        state = CoreWorkingState(
             messages=[],
             log_content="test",
             message_count=0

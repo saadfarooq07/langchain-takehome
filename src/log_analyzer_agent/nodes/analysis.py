@@ -22,6 +22,14 @@ from ..cache_utils.cache import get_cache
 from ..validation import LogValidator
 from ..services.memory_service import MemoryService
 
+from dotenv import load_dotenv
+load_dotenv()
+
+# Import persistence utilities
+from ..persistence_utils import (
+    log_debug, log_warning, log_error,
+    get_workflow_timestamp, generate_analysis_id
+)
 
 def has_memory_features(state: CoreState) -> bool:
     """Check if state has memory features enabled."""
@@ -183,7 +191,7 @@ User Preferences:
             """
         except Exception as e:
             # Memory features failed, continue without them
-            print(f"Memory features unavailable: {e}")
+            await log_warning(f"Memory features unavailable: {e}")
 
     # Format environment context if available
     environment_context = ""
@@ -212,7 +220,8 @@ User Preferences:
             )
     else:
         # Use legacy prompt
-        prompt_template = configuration.prompt or configuration.prompt_config.fallback_template
+        from ..configuration import DEFAULT_PROMPT
+        prompt_template = configuration.prompt or DEFAULT_PROMPT
         prompt_content = prompt_template.format(
             log_content=processed_log,
             environment_context=environment_context + memory_context,
@@ -232,7 +241,8 @@ User Preferences:
         if has_interactive_features(state):
             tools.append(request_additional_info)
 
-        model = raw_model.bind_tools(tools, tool_choice="any")
+        # Bind tools - model can choose to use them
+        model = raw_model.bind_tools(tools, tool_choice="auto")
 
         response = cast(AIMessage, await model.ainvoke(messages))
 
@@ -244,10 +254,43 @@ User Preferences:
         for tool_call in response.tool_calls:
             if tool_call["name"] == "submit_analysis":
                 analysis_result = tool_call["args"]
+                # Handle case where args might be a JSON string
+                if isinstance(analysis_result, str):
+                    try:
+                        import json
+                        analysis_result = json.loads(analysis_result)
+                    except json.JSONDecodeError:
+                        # If it's not valid JSON, keep as string and let validation handle it
+                        pass
             elif tool_call[
                 "name"
             ] == "request_additional_info" and has_interactive_features(state):
                 needs_user_input = True
+    
+    # Fallback: If no submit_analysis tool call but response has content, 
+    # treat it as incomplete analysis that needs tool usage
+    if not analysis_result and not needs_user_input and response.content:
+        # The model provided analysis in text form but didn't call submit_analysis
+        # Add a message to force tool usage on next iteration
+        await log_warning("Model provided analysis without calling submit_analysis tool")
+        
+        # Add a system message to force tool usage
+        from langchain_core.messages import SystemMessage
+        system_message = SystemMessage(
+            content="You MUST use the submit_analysis tool to provide your analysis. "
+                   "Do not provide analysis in text form. Use the tool with a properly structured dictionary."
+        )
+        
+        # Update the response to include this system message
+        response_dict = {
+            "messages": [response, system_message],
+            "analysis_result": None,  # Explicitly set to None to trigger validation
+        }
+        
+        if has_interactive_features(state):
+            response_dict["needs_user_input"] = False
+            
+        return response_dict
 
     # Store analysis result in memory if complete and memory features available
     if (
@@ -257,13 +300,15 @@ User Preferences:
         and getattr(state, "user_id", None)
     ):
         try:
+            # Use consistent timestamp from state
+            state_dict = {"start_time": getattr(state, "start_time", None)}
+            workflow_timestamp = await get_workflow_timestamp(state_dict)
+            
             performance_metrics = {
-                "response_time": time.time()
-                - getattr(state, "start_time", time.time()),
+                "response_time": workflow_timestamp - getattr(state, "start_time", workflow_timestamp),
                 "memory_searches": getattr(state, "memory_search_count", 0),
                 "similar_issues_found": len(state_updates.get("similar_issues", [])),
-                "tokens_used": len(str(messages))
-                + len(str(response)),  # Rough estimate
+                "tokens_used": len(str(messages)) + len(str(response)),  # Rough estimate
             }
 
             await memory_service.store_analysis_result(
@@ -272,9 +317,10 @@ User Preferences:
                 state.log_content,
                 analysis_result,
                 performance_metrics,
+                state=state_dict,
             )
         except Exception as e:
-            print(f"Error storing analysis result in memory: {e}")
+            await log_error(f"Error storing analysis result in memory: {e}")
 
     # Build response with only the fields the state supports
     response_dict = {
